@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "nhcm_capitalmc",
+  "version": "${version}",
+  "name": "CapitalMC",
+  "description": "Server-side GUI and command gateway for the CapitalMC trading system.",
+  "authors": ["NHCM"],
+  "environment": "server",
+  "entrypoints": {
+    "server": ["nhcm.capitalmc.CapitalMC"]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "~26.3",
+    "java": ">=25",
+    "fabric-api": "*",
+    "sgui": ">=2.2.1"
+  }
+}
