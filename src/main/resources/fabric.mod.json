@@ -6,7 +6,9 @@
   "description": "Server-side GUI and command gateway for the CapitalMC trading system.",
   "authors": ["NHCM"],
   "environment": "server",
+  "mixins": ["capitalmc.mixins.json"],
   "entrypoints": {
+    "preLaunch": ["nhcm.capitalmc.WindowsDiagnostics"],
     "server": ["nhcm.capitalmc.CapitalMC"]
   },
   "depends": {

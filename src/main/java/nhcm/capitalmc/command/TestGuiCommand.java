@@ -12,34 +12,44 @@ import nhcm.capitalmc.gui.PageType;
 
 import java.util.Locale;
 
-/** Temporary player-only page preview entry point; no accounts or orders are created. */
-public class TestGuiCommand extends BaseCommand {
-    public TestGuiCommand() {
+/**
+ * Temporary player-only page preview entry point; no accounts or orders are created.
+ */
+public class TestGuiCommand extends BaseCommand
+{
+    public TestGuiCommand()
+    {
         super("testgui");
     }
 
     @Override
-    protected void configure(LiteralArgumentBuilder<CommandSourceStack> builder) {
-        for (PageType page : PageType.values()) {
+    protected void configure(LiteralArgumentBuilder<CommandSourceStack> builder)
+    {
+        for (PageType page : PageType.values())
+        {
             builder.then(Commands.literal(page.name().toLowerCase(Locale.ROOT))
-                    .executes(context -> open(context, page)));
+                                 .executes(context -> open(context, page)));
         }
     }
 
     @Override
-    protected int execute(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+    protected int execute(CommandContext<CommandSourceStack> context) throws CommandSyntaxException
+    {
         return open(context, PageType.HOME);
     }
 
-    private int open(CommandContext<CommandSourceStack> context, PageType page) throws CommandSyntaxException {
+    private int open(CommandContext<CommandSourceStack> context, PageType page) throws CommandSyntaxException
+    {
         var player = context.getSource().getPlayerOrException();
-        try {
+        try
+        {
             CapitalMC.guiManager.openTradingGui(player, page);
             return Command.SINGLE_SUCCESS;
-        } catch (RuntimeException error) {
+        } catch (RuntimeException error)
+        {
             CapitalMC.logger.error("Cannot preview GUI page {}", page, error);
             context.getSource().sendFailure(Component.literal("GUI preview failed: " + page
-                    + ". See the server log for details."));
+                                                              + ". See the server log for details."));
             return 0;
         }
     }

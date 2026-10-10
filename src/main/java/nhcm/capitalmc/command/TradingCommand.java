@@ -6,13 +6,16 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.minecraft.commands.CommandSourceStack;
 import nhcm.capitalmc.CapitalMC;
 
-public class TradingCommand extends BaseCommand {
-    public TradingCommand() {
+public class TradingCommand extends BaseCommand
+{
+    public TradingCommand()
+    {
         super("trading");
     }
 
     @Override
-    protected int execute(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+    protected int execute(CommandContext<CommandSourceStack> context) throws CommandSyntaxException
+    {
         CapitalMC.guiManager.openTradingGui(context.getSource().getPlayerOrException());
         return Command.SINGLE_SUCCESS;
     }

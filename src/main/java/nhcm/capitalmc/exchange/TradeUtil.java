@@ -1,46 +1,127 @@
 package nhcm.capitalmc.exchange;
 
+import nhcm.advmatch.BusinessException;
+import nhcm.advmatch.command.read.ReadOrders;
+import nhcm.advmatch.command.read.ReadPositions;
+import nhcm.advmatch.command.read.ReadTrades;
+import nhcm.advmatch.command.read.ReadUserOpenOrders;
 import nhcm.advmatch.model.*;
 import nhcm.advmatch.object.*;
 import nhcm.capitalmc.account.ServerUser;
+import nhcm.capitalmc.service.ApplicationExecutors;
+import nhcm.capitalmc.service.GameServices;
+
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-public class TradeUtil {
-    private TradeUtil() {}
+public class TradeUtil
+{
+    private TradeUtil()
+    {
+    }
+
     public static CompletableFuture<Order> placeSpot(ServerUser user, long symbolId, OrderSide side,
-            OrderType type, TimeInForce timeInForce, long price, long quantity, long timestamp) {
+                                                     OrderType type, TimeInForce timeInForce, long price, long quantity, long timestamp)
+    {
         var exchange = QueryUtil.exchange();
         return SymbolUtil.getSymbol(symbolId).thenCompose(symbol -> symbol.snapshot().thenCompose(view -> {
-            if (view.type() != SymbolType.Spot) return CompletableFuture.failedFuture(
-                    new IllegalArgumentException("Symbol is not a spot market"));
+            if (view.type() != SymbolType.Spot)
+            {
+                return CompletableFuture.failedFuture(
+                        new IllegalArgumentException("Symbol is not a spot market"));
+            }
             return UserUtil.getUser(user).thenCompose(backend -> exchange.matching().place(
                     backend, symbol, side, type, timeInForce, price, quantity, timestamp,
-                    new ContractOrderOptions()));
+                    null));
         }));
     }
-    public static CompletableFuture<List<OrderView>> openOrders(ServerUser user) {
+
+    public static CompletableFuture<List<OrderView>> openOrders(ServerUser user)
+    {
         return UserUtil.getUser(user).thenCompose(value -> QueryUtil.all(value::orders));
     }
-    public static CompletableFuture<List<PositionView>> positions(ServerUser user) {
+
+    public static CompletableFuture<List<PositionView>> positions(ServerUser user)
+    {
         return UserUtil.getUser(user).thenCompose(value -> QueryUtil.all(value::positions));
     }
-    /** Prices and quantities are native fixed-point units; timestamp is passed explicitly. */
+
+    public static CompletableFuture<ReadResponse<OrderView>> orderPage(ServerUser user, boolean history, long symbol, ReadCursor cursor)
+    {
+        return UserUtil.getUser(user).thenCompose(backend -> {
+            var query = bounded(backend.id(), symbol, cursor).withIncludeTerminal(history);
+            return QueryUtil.exchange().submit(history ? new ReadOrders(query)
+                                                       : new ReadUserOpenOrders(query)).thenApply(TradeUtil::checked);
+        });
+    }
+
+    public static CompletableFuture<ReadResponse<PositionView>> positionPage(ServerUser user, boolean history, long symbol, ReadCursor cursor)
+    {
+        return UserUtil.getUser(user).thenCompose(backend -> QueryUtil.exchange().submit(new ReadPositions(
+                bounded(backend.id(), symbol, cursor).withIncludeTerminal(history).withPositionFilter(history ? PositionFilter.All : PositionFilter.Open))).thenApply(TradeUtil::checked));
+    }
+
+    public static CompletableFuture<ReadResponse<TradeView>> tradePage(ServerUser user, long symbol, ReadCursor cursor)
+    {
+        return UserUtil.getUser(user).thenCompose(backend -> QueryUtil.exchange().submit(new ReadTrades(
+                bounded(backend.id(), symbol, cursor))).thenApply(TradeUtil::checked));
+    }
+
+    private static ObservationQuery bounded(long user, long symbol, ReadCursor cursor)
+    {
+        return new ObservationQuery().withUserId(user).withSymbolId(symbol).withLimit(27).withScanBudget(2048).withCursor(cursor);
+    }
+
+    private static <T> ReadResponse<T> checked(ReadResponse<T> response)
+    {
+        if (response.page().state() != ReadState.Success && response.page().state() != ReadState.NotFound)
+        {
+            throw new BusinessException(response.page());
+        }
+        return response;
+    }
+
+    /**
+     * Drain bounded native open-order pages without materializing an unbounded order list.
+     */
+    public static CompletableFuture<Integer> cancelPage(ServerUser user)
+    {
+        return cancelPages(user, 0, 0);
+    }
+
+    private static CompletableFuture<Integer> cancelPages(ServerUser user, int total, int pages)
+    {
+        if (pages >= 1024)
+        {
+            return CompletableFuture.failedFuture(new IllegalStateException("Cancellation scan limit reached; invoke again"));
+        }
+        return orderPage(user, false, 0, new ReadCursor()).thenCompose(response -> {
+            if (response.values().isEmpty())
+            {
+                return CompletableFuture.completedFuture(total);
+            }
+            var jobs = response.values().stream().map(order -> cancel(user, order.orderId(), System.currentTimeMillis())).toList();
+            return CompletableFuture.allOf(jobs.toArray(CompletableFuture[]::new))
+                                    .thenComposeAsync(unused -> cancelPages(user, total + jobs.size(), pages + 1), ApplicationExecutors.CALLBACKS);
+        });
+    }
+
+    /**
+     * Prices and quantities are native fixed-point units; timestamp is passed explicitly.
+     */
     public static CompletableFuture<Order> place(ServerUser user, long symbolId, OrderSide side,
-            OrderType type, TimeInForce timeInForce, long price, long quantity, long timestamp,
-            ContractOrderOptions options) {
+                                                 OrderType type, TimeInForce timeInForce, long price, long quantity, long timestamp,
+                                                 ContractOrderOptions options)
+    {
         var exchange = QueryUtil.exchange();
         return UserUtil.getUser(user).thenCombine(SymbolUtil.getSymbol(symbolId),
-                (backend, symbol) -> exchange.matching().place(backend, symbol, side, type,
-                        timeInForce, price, quantity, timestamp, options)).thenCompose(value -> value);
+                                                  (backend, symbol) -> exchange.matching().place(backend, symbol, side, type,
+                                                                                                 timeInForce, price, quantity, timestamp, options)).thenCompose(value -> value);
     }
-    public static CompletableFuture<CommandReceipt> cancel(ServerUser user, long orderId, long timestamp) {
+
+    public static CompletableFuture<CommandReceipt> cancel(ServerUser user, long orderId, long timestamp)
+    {
         QueryUtil.positive(orderId);
-        return UserUtil.getUser(user).thenCompose(backend -> QueryUtil.exchange().orders().find(orderId)
-                .thenCompose(order -> order.snapshot().thenCompose(view -> {
-                    if (view.userId() != backend.id()) return CompletableFuture.failedFuture(
-                            new SecurityException("Order belongs to another user"));
-                    return order.cancel(timestamp);
-                })));
+        return GameServices.get().settlements.cancel(user, orderId, timestamp);
     }
 }

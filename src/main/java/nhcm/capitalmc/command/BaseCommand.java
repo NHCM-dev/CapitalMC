@@ -8,38 +8,54 @@ import net.minecraft.commands.Commands;
 
 import java.util.Objects;
 
-/** Shared lifecycle for commands: access checks, root execution, and argument setup. */
-public abstract class BaseCommand {
+/**
+ * Shared lifecycle for commands: access checks, root execution, and argument setup.
+ */
+public abstract class BaseCommand
+{
     private final String name;
 
-    protected BaseCommand(String name) {
+    protected BaseCommand(String name)
+    {
         Objects.requireNonNull(name, "name");
-        if (name.isBlank() || name.codePoints().anyMatch(Character::isWhitespace) || name.startsWith("/")) {
+        if (name.isBlank() || name.codePoints().anyMatch(Character::isWhitespace) || name.startsWith("/"))
+        {
             throw new IllegalArgumentException("Command name must be a single literal without a leading slash");
         }
         this.name = name;
     }
 
-    public final String getName() {
+    public final String getName()
+    {
         return name;
     }
 
-    /** Creates a fresh command tree for each server registration. */
-    public final LiteralArgumentBuilder<CommandSourceStack> build() {
+    /**
+     * Creates a fresh command tree for each server registration.
+     */
+    public final LiteralArgumentBuilder<CommandSourceStack> build()
+    {
         LiteralArgumentBuilder<CommandSourceStack> builder = Commands.literal(name)
-                .requires(this::canUse)
-                .executes(this::execute);
+                                                                     .requires(this::canUse)
+                                                                     .executes(this::execute);
         configure(builder);
         return builder;
     }
 
-    /** Override to restrict access to the command and its children. */
-    protected boolean canUse(CommandSourceStack source) {
+    /**
+     * Override to restrict access to the command and its children.
+     */
+    protected boolean canUse(CommandSourceStack source)
+    {
         return true;
     }
 
-    /** Add arguments and subcommands here using Brigadier builders. */
-    protected void configure(LiteralArgumentBuilder<CommandSourceStack> builder) {}
+    /**
+     * Add arguments and subcommands here using Brigadier builders.
+     */
+    protected void configure(LiteralArgumentBuilder<CommandSourceStack> builder)
+    {
+    }
 
     protected abstract int execute(CommandContext<CommandSourceStack> context)
             throws CommandSyntaxException;

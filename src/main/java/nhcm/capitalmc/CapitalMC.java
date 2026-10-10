@@ -2,38 +2,61 @@ package nhcm.capitalmc;
 
 import net.fabricmc.api.DedicatedServerModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import nhcm.advmatch.Exchange;
 import nhcm.advmatch.TransportOptions;
 import nhcm.advmatch.model.*;
 import nhcm.capitalmc.command.CapitalCommands;
+import nhcm.capitalmc.management.GuiInputManager;
 import nhcm.capitalmc.management.GuiManager;
 import nhcm.capitalmc.management.ServerUserManager;
+import nhcm.capitalmc.service.ApplicationExecutors;
+import nhcm.capitalmc.service.GameServices;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
-import java.util.concurrent.ForkJoinPool;
 
 public final class CapitalMC implements DedicatedServerModInitializer
 {
+    public static GameServices services;
     public static Exchange exchange = null;
+    public static CompletableFuture<Void> accountsReady;
     public static final GuiManager guiManager = new GuiManager();
+    public static final GuiInputManager guiInputManager = new GuiInputManager();
     public static final ServerUserManager serverUserManager = new ServerUserManager(
-            FabricLoader.getInstance().getGameDir().resolve("capitalmc").resolve("users.json"));
+            FabricLoader.getInstance().getGameDir().resolve("capitalmc").resolve("users.dat"));
     public static final Logger logger = LoggerFactory.getLogger("CapitalMC");
 
     @Override
     public void onInitializeServer()
     {
         CapitalCommands.register();
+        guiInputManager.registerEvents();
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+            guiInputManager.cancel(handler.player.getUUID());
+            if (services != null)
+            {
+                services.items.cancelSelection(handler.player.getUUID());
+            }
             guiManager.removePlayer(handler.player);
             serverUserManager.logout(handler.player.getUUID());
         });
 
         initializeExchange();
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+            services = new GameServices(server);
+            guiManager.startRefreshing(server);
+        });
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            if (services != null && server.getTickCount() % 20 == 0)
+            {
+                services.markets.tick();
+            }
+        });
 
         registerStops();
 
@@ -45,25 +68,25 @@ public final class CapitalMC implements DedicatedServerModInitializer
         logger.info("Loading internal exchange...");
 
         ExchangeConfig config = exchangeConfig();
-        Executor callback = ForkJoinPool.commonPool();
+        Executor callback = ApplicationExecutors.CALLBACKS;
 
         int responseBatchSize = 256;
         int spinCount = 64;
         long activeParkNanos = 1000L;
-        int maxOutstanding = (int)Math.min(config.maxPendingRequests(), 2147483647L);
+        int maxOutstanding = (int) Math.min(config.maxPendingRequests(), 2147483647L);
 
         TransportOptions transportOptions = new TransportOptions(
                 responseBatchSize, spinCount, activeParkNanos, maxOutstanding
         );
 
         exchange = new Exchange(config, callback, transportOptions);
-        // Initialization happens before serving players; existing IDs must align before trading starts.
-        try {
-            serverUserManager.connectExchange(exchange).join();
-        } catch (RuntimeException failure) {
-            exchange.close();
-            throw failure;
-        }
+        accountsReady = serverUserManager.connectExchange(exchange);
+        accountsReady.whenComplete((unused, failure) -> {
+            if (failure != null)
+            {
+                logger.error("Account binding recovery failed; trading services remain unavailable", failure);
+            }
+        });
 
         logger.info("Finished loading internal exchange.");
     }
@@ -97,7 +120,7 @@ public final class CapitalMC implements DedicatedServerModInitializer
         long maxScan = 16384L;
         long maxBatchQueries = 16L;
         long maxBatchScan = 65536L;
-        boolean indexUserOpenOrders = false;
+        boolean indexUserOpenOrders = true;
         long expectedUsersWithOrders = 0L;
         long tradeHistoryCapacity = 4096L;
         long contractEventCapacity = 4096L;
@@ -125,7 +148,13 @@ public final class CapitalMC implements DedicatedServerModInitializer
     private void registerStops()
     {
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+            guiManager.stopRefreshing();
             guiManager.closeAll();
+            guiInputManager.clear();
+            if (services != null)
+            {
+                services.items.clearSelections();
+            }
             serverUserManager.clearSessions();
             logger.info("Stopping CapitalMC...");
             logger.info("Shutting down internal exchange...");
@@ -134,6 +163,7 @@ public final class CapitalMC implements DedicatedServerModInitializer
         });
 
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+            ApplicationExecutors.shutdown();
             logger.info("CapitalMC stopped.");
         });
     }

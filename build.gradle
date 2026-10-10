@@ -7,6 +7,7 @@ base { archivesName = 'CapitalMC' }
 
 repositories {
     maven { url = 'https://maven.nucleoid.xyz/' }
+    flatDir { dirs 'libs' }
 }
 
 loom {
@@ -19,6 +20,15 @@ loom {
     }
 }
 
+fabricApi.configureTests {
+    createSourceSet = true
+    modId = 'capitalmc_test'
+    enableClientGameTests = false
+}
+loom.runs.gameTest {
+    property 'fabric-api.gametest.report-file', '../../reports/gametest.xml'
+}
+
 dependencies {
     minecraft "com.mojang:minecraft:${minecraft_version}"
     implementation "net.fabricmc:fabric-loader:${loader_version}"
@@ -29,7 +39,8 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
-    implementation fileTree('./libs')
+    implementation 'nhcm:advmatch:1.1.0'
+    include 'nhcm:advmatch:1.1.0'
 
     compileOnly("org.projectlombok:lombok:1.18.48")
     annotationProcessor("org.projectlombok:lombok:1.18.48")
@@ -38,7 +49,12 @@ dependencies {
     testAnnotationProcessor("org.projectlombok:lombok:1.18.48")
 }
 
-test { useJUnitPlatform() }
+test {
+    useJUnitPlatform()
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    workingDir layout.buildDirectory.dir('test-runtime').get().asFile
+    doFirst { workingDir.mkdirs() }
+}
 
 processResources {
     def modVersion = project.version
