@@ -224,11 +224,7 @@ public final class McAssetRegistry
                                 }
                             }
                             return null;
-                        })).thenCompose(unused -> registerItem("mc_diamond", "Diamond", new ItemStack(Items.DIAMOND)))
-                        .thenCompose(unused -> registerItem("mc_gold_ingot", "Gold Ingot", new ItemStack(Items.GOLD_INGOT)))
-                        .thenCompose(unused -> registerItem("mc_melon", "Melon Slice", new ItemStack(Items.MELON_SLICE)))
-                        .thenCompose(unused -> registerElectronic("cmc", "Capital Currency", 2, new ItemStack(Items.PAPER)))
-                        .thenApply(unused -> null);
+                        }));
     }
 
     public CompletableFuture<Asset> registerItem(String name, String displayName, ItemStack prototype)

@@ -17,6 +17,11 @@ public class HomePage extends BaseSubGui
     @Override
     public void render(TradingGui gui)
     {
+        if (gui.getUser().isEmpty())
+        {
+            GuiWidgets.button(gui, 22, Items.PLAYER_HEAD, "ui.access.login_entry", "ui.access.required", () -> gui.showPage(PageType.ACCESS));
+            return;
+        }
         if (gui.getPlayer().permissions().hasPermission(Permissions.COMMANDS_OWNER))
         {
             GuiWidgets.button(gui, 8, Items.COMPASS, "ui.admin", "", () -> gui.showPage(PageType.ADMIN));

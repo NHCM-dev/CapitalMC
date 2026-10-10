@@ -18,6 +18,7 @@ public class UserUtil
 
     public static CompletableFuture<User> getUser(ServerUser user)
     {
+        CapitalMC.serverUserManager.requireAccess(user);
         return CapitalMC.serverUserManager.ensureExchangeUser(user.getUuid())
                                           .thenCompose(bound -> getUser(bound.getExchangeUserId()));
     }

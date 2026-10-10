@@ -102,12 +102,15 @@ public class AccessPage extends BaseSubGui
         }
         GuiWidgets.button(gui, 20, Items.PLAYER_HEAD, "ui.access.login", "", () -> login(null));
         GuiWidgets.button(gui, 22, Items.WRITABLE_BOOK, "ui.access.register", "ui.access.register_limit", this::register);
-        GuiWidgets.button(gui, 24, Items.BARRIER, "ui.access.logout",
-                          gui.getUser().map(user -> user.getDisplayName() + " (" + user.getUsername() + ") #" + user.getExchangeUserId()).orElse(""),
-                          () -> {
-                              CapitalMC.serverUserManager.logout(gui.getPlayer().getUUID());
-                              GuiActions.message(gui, "ui.success.logout");
-                          });
+        if (gui.getUser().isPresent())
+        {
+            GuiWidgets.button(gui, 24, Items.BARRIER, "ui.access.logout",
+                              gui.getUser().map(user -> user.getDisplayName() + " (" + user.getUsername() + ") #" + user.getExchangeUserId()).orElse(""),
+                              () -> {
+                                  CapitalMC.serverUserManager.logout(gui.getPlayer().getUUID());
+                                  GuiActions.message(gui, "ui.success.logout");
+                              });
+        }
         var owned = CapitalMC.serverUserManager.getOwnedAccounts(gui.getPlayer().getUUID());
         for (int i = 0; i < owned.size(); i++)
         {

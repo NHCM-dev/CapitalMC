@@ -37,6 +37,29 @@ class ServerUserManagerTest
     }
 
     @Test
+    void bansRejectLoginsAndVerifiedContinuationAndRevokeAllSessions()
+    {
+        var manager = manager();
+        var user = manager.register("Restricted", "restricted", "", UUID.randomUUID());
+        var first = UUID.randomUUID();
+        var second = UUID.randomUUID();
+        manager.activateVerified(first, user);
+        manager.activateVerified(second, user);
+        long version = manager.getSessionVersion(first);
+        assertEquals(2, manager.playersUsing(user.getUuid()).size());
+        manager.setAccessPolicy(candidate -> !candidate.getUuid().equals(user.getUuid()));
+        assertTrue(manager.getLoggedInUser(first).isEmpty());
+        assertThrows(CompletionException.class, () -> manager.authenticateAsync("restricted", "").join());
+        assertThrows(IllegalStateException.class, () -> manager.activateVerified(UUID.randomUUID(), user));
+        manager.revokeSessions(user.getUuid());
+        assertTrue(manager.getSessionVersion(first) > version);
+        manager.setAccessPolicy(candidate -> true);
+        assertTrue(manager.getLoggedInUser(first).isEmpty());
+        assertTrue(manager.getLoggedInUser(second).isEmpty());
+        assertEquals(user.getUuid(), manager.authenticateAsync("restricted", "").join().orElseThrow().getUuid());
+    }
+
+    @Test
     void emptyCredentialSurvivesStorageAndAllowsAnotherPlayerToLoginWithoutPassword()
     {
         var manager = manager();

@@ -30,11 +30,8 @@ public class ActivityPage extends BaseSubGui
         cursor = new ReadCursor();
         previous.clear();
         cache.invalidate();
-        selected = null;
         page = 0;
     }
-
-    private PositionView selected;
 
     public ActivityPage(TradingGui gui, PageType type)
     {
@@ -54,20 +51,6 @@ public class ActivityPage extends BaseSubGui
     private String price(Data data, SymbolView symbol, long raw)
     {
         return AssetUtil.units(symbol.baseAssetId(), scale(data, symbol.baseAssetId())).price(raw, AssetUtil.units(symbol.quoteAssetId(), scale(data, symbol.quoteAssetId())));
-    }
-
-    private void closePosition(PositionView position, long quantity, OrderType type, long price)
-    {
-        var gui = getGui();
-        var user = GuiActions.user(gui);
-        GuiActions.confirm(gui, "ui.confirm.close_position", () -> GuiActions.task(gui, UserUtil.getUser(user).thenCompose(backend -> {
-            if (backend.id() != position.userId())
-            {
-                throw new SecurityException("ui.session.changed");
-            }
-            return GameServices.get().settlements.place(user, position.symbolId(), position.side() == PositionSide.Long ? OrderSide.Ask : OrderSide.Bid, type, TimeInForce.IOC, type == OrderType.Market ? 0 : price, quantity,
-                                                        new ContractOrderOptions().withPositionId(position.positionId()).withReduceOnly(true).withLeverage(position.leverage()).withMarginMode(position.marginMode()).withPriceLimit(type == OrderType.Market ? price : 0));
-        }), "ui.success.close_order", position.positionId()));
     }
 
     @Override
@@ -104,6 +87,7 @@ public class ActivityPage extends BaseSubGui
         GuiWidgets.option(gui, 8, Items.SHIELD, "ui.positions", "", getPage() == PageType.POSITIONS, () -> gui.showPage(PageType.POSITIONS));
         GuiWidgets.button(gui, 6, Items.BOOK, getPage() == PageType.ORDERS ? "ui.order_history" : "ui.position_history", "", () -> gui.showPage(getPage() == PageType.ORDERS ? PageType.ORDER_HISTORY : PageType.POSITION_HISTORY));
         GuiWidgets.button(gui, 5, Items.PAPER, "ui.trades", "", () -> gui.showPage(PageType.TRADES));
+        GuiWidgets.button(gui, 4, Items.REDSTONE_TORCH, "ui.conditional.page", "", () -> gui.showPage(PageType.CONDITIONALS));
         GuiWidgets.separator(gui);
         if (getPage() == PageType.ORDERS)
         {
@@ -123,72 +107,15 @@ public class ActivityPage extends BaseSubGui
             var positions = data.positions.stream().filter(p -> !p.closed() && (symbolId == 0 || p.symbolId() == symbolId)).toList();
             count = positions.size();
             page = GuiWidgets.clamp(page, count);
-            if (selected != null)
-            {
-                selected = positions.stream().filter(p -> p.positionId() == selected.positionId()).findFirst().orElse(null);
-                if (selected != null)
-                {
-                    var p = selected;
-                    var s = symbol(data, p.symbolId());
-                    GuiWidgets.button(gui, 0, Items.NETHER_STAR, "ui.position.close_all", GameServices.get().markets.quantityUnits(s).format(p.size()), () -> GuiActions.input(gui, GuiWidgets.text(gui, "ui.trade.market_cap_input") + "\n" + GuiWidgets.priceInput(gui, s.baseAssetId(), s.quoteAssetId()), text -> AssetUtil.units(s.baseAssetId(), scale(data, s.baseAssetId())).parsePrice(text, AssetUtil.units(s.quoteAssetId(), scale(data, s.quoteAssetId()))), v -> {
-                                                                                                                                                                        })
-                                                                                                                                                                        .thenAccept(cap -> {
-                                                                                                                                                                            if (cap.isPresent())
-                                                                                                                                                                            {
-                                                                                                                                                                                closePosition(p, p.size(), OrderType.Market, cap.get());
-                                                                                                                                                                            }
-                                                                                                                                                                        }).exceptionally(error -> {
-                                GuiActions.error(gui, error);
-                                return null;
-                            }));
-                    GuiWidgets.button(gui, 1, Items.BOW, "ui.position.close_limit", "", () -> GuiActions.input(gui, GuiWidgets.priceInput(gui, s.baseAssetId(), s.quoteAssetId()), text -> AssetUtil.units(s.baseAssetId(), scale(data, s.baseAssetId())).parsePrice(text, AssetUtil.units(s.quoteAssetId(), scale(data, s.quoteAssetId()))), v -> {
-                                                                                                        })
-                                                                                                        .thenAccept(price -> {
-                                                                                                            if (price.isPresent())
-                                                                                                            {
-                                                                                                                GuiActions.input(gui, GuiWidgets.text(gui, "ui.input.close_quantity", GameServices.get().markets.quantityUnits(s).format(p.size())), text -> {
-                                                                                                                              long raw = GameServices.get().markets.quantityUnits(s).parse(text);
-                                                                                                                              if (raw > p.size())
-                                                                                                                              {
-                                                                                                                                  throw new IllegalArgumentException("ui.trade.quantity_step");
-                                                                                                                              }
-                                                                                                                              return raw;
-                                                                                                                          }, v -> {
-                                                                                                                          })
-                                                                                                                          .thenAccept(q -> {
-                                                                                                                              if (q.isPresent())
-                                                                                                                              {
-                                                                                                                                  closePosition(p, q.get(), OrderType.Limit, price.get());
-                                                                                                                              }
-                                                                                                                          }).exceptionally(error -> {
-                                                                                                                              GuiActions.error(gui, error);
-                                                                                                                              return null;
-                                                                                                                          });
-                                                                                                            }
-                                                                                                        }).exceptionally(error -> {
-                                GuiActions.error(gui, error);
-                                return null;
-                            }));
-                    GuiWidgets.button(gui, 2, Items.ANVIL, "ui.position.margin", "", () -> GuiActions.input(gui, GuiWidgets.amountInput(gui, s.quoteAssetId(), 1), text -> AssetUtil.units(s.quoteAssetId(), scale(data, s.quoteAssetId())).parse(text), v -> {
-                                                                                                     })
-                                                                                                     .thenAccept(amount -> {
-                                                                                                         if (amount.isPresent())
-                                                                                                         {
-                                                                                                             GuiActions.confirm(gui, "ui.confirm.margin", () -> GuiActions.task(gui, GameServices.get().settlements.addMargin(user, p.positionId(), amount.get()), "ui.success.margin", p.positionId()));
-                                                                                                         }
-                                                                                                     })
-                                                                                                     .exceptionally(error -> {
-                                                                                                         GuiActions.error(gui, error);
-                                                                                                         return null;
-                                                                                                     }));
-                }
-            }
             for (int i = page * 27; i < Math.min(count, page * 27 + 27); i++)
             {
                 var position = positions.get(i);
                 var s = symbol(data, position.symbolId());
                 String lore = GuiWidgets.text(gui, "ui.position.details", position.side(), GameServices.get().markets.quantityUnits(s).format(position.size()), price(data, s, position.averageEntryPrice()), price(data, s, position.predictedLiquidationPrice()), AssetUtil.units(s.quoteAssetId(), scale(data, s.quoteAssetId())).format(position.unrealizedPnL()), position.leverage(), position.marginMode());
-                GuiWidgets.button(gui, 18 + i - page * 27, Items.SHIELD, s.name() + " #" + position.positionId(), lore, () -> selected = position);
+                GuiWidgets.button(gui, 18 + i - page * 27, Items.SHIELD, s.name() + " #" + position.positionId(), lore, () -> {
+                    gui.selectPosition(position.positionId());
+                    gui.showPage(PageType.POSITION);
+                });
             }
         }
         if (count == 0)
@@ -200,13 +127,12 @@ public class ActivityPage extends BaseSubGui
     @Override
     public void renderOverlay(TradingGui gui)
     {
-        GuiWidgets.button(gui, 49, Items.END_CRYSTAL, "gui.capitalmc.refresh", "", this::reset);
+
         if (!previous.isEmpty())
         {
             GuiWidgets.button(gui, 51, Items.ARROW, "ui.page.previous", "", () -> {
                 cursor = previous.pop();
                 cache.invalidate();
-                selected = null;
             });
         }
         if (queryPage.hasMore())
@@ -216,7 +142,6 @@ public class ActivityPage extends BaseSubGui
                 previous.push(cursor);
                 cursor = next;
                 cache.invalidate();
-                selected = null;
             });
         }
     }

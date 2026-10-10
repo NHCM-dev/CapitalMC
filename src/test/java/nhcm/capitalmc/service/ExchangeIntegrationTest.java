@@ -6,6 +6,8 @@ import nhcm.advmatch.*;
 import nhcm.advmatch.command.account.*;
 import nhcm.advmatch.command.persistence.Flush;
 import nhcm.advmatch.command.read.ReadBalance;
+import nhcm.advmatch.command.order.ModifyConditionalOrder;
+import nhcm.advmatch.command.order.CancelConditionalOrder;
 import nhcm.advmatch.model.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -34,6 +36,59 @@ class ExchangeIntegrationTest
     {
         var result = exchange.submit(new ReadBalance(new ObservationQuery().withAccountId(account).withAssetId(asset))).join();
         return result.values().isEmpty() ? 0 : result.values().getFirst().active();
+    }
+
+    @Test
+    void conditionalOcoModificationCancellationPartialExecutionAndReplay()
+    {
+        long symbolId, buyerId, sellerId, stopId, profitId;
+        try (var e = exchange())
+        {
+            var base = e.assets().create("Base", "base", 0).join();
+            var quote = e.assets().create("Quote", "quote", 0).join();
+            var symbol = e.symbols().create("B/Q", SymbolType.Spot, base, quote).join();
+            e.books().addSpot(symbol, OrderBookImplementation.Radix).join();
+            var buyer = e.users().create().join();
+            var seller = e.users().create().join();
+            buyer.spotAccount().join().updateBalance(quote, 1000).join();
+            seller.spotAccount().join().updateBalance(base, 10).join();
+            symbol.book().place(seller, OrderSide.Ask, OrderType.Limit, TimeInForce.GTC, 100, 1, 1).join();
+            symbol.book().place(buyer, OrderSide.Bid, OrderType.Limit, TimeInForce.IOC, 100, 1, 2).join();
+            var request = new ConditionalOrderRequest().withUserId(seller.id()).withSymbolId(symbol.id()).withQuantity(2)
+                                                       .withTimestamp(3).withTriggerPrice(90);
+            var stop = e.conditionalOrders().place(request).join();
+            var profit = e.conditionalOrders().place(request.withKind(ConditionalOrderKind.TakeProfit).withTriggerPrice(110).withTimestamp(4).withOcoOrderId(stop.id())).join();
+            e.submit(new ModifyConditionalOrder(seller.id(), profit.id(), 120, 0, 3, 5)).join();
+            assertEquals(120, profit.snapshot().join().request().triggerPrice());
+            e.submit(new CancelConditionalOrder(seller.id(), profit.id(), 6)).join();
+            assertEquals(ConditionalOrderStatus.Cancelled, profit.snapshot().join().status());
+            assertEquals(ConditionalOrderStatus.Waiting, stop.snapshot().join().status());
+            assertEquals(0, stop.snapshot().join().request().ocoOrderId());
+            profit = e.conditionalOrders().place(request.withKind(ConditionalOrderKind.TakeProfit).withTriggerPrice(120).withTimestamp(7).withOcoOrderId(stop.id())).join();
+            symbolId = symbol.id();
+            buyerId = buyer.id();
+            sellerId = seller.id();
+            stopId = stop.id();
+            profitId = profit.id();
+            e.submit(new Flush()).join();
+        }
+        try (var e = exchange())
+        {
+            var stop = e.conditionalOrders().get(stopId);
+            var profit = e.conditionalOrders().get(profitId);
+            assertEquals(ConditionalOrderStatus.Waiting, stop.snapshot().join().status());
+            assertEquals(profitId, stop.snapshot().join().request().ocoOrderId());
+            var symbol = e.symbols().get(symbolId);
+            symbol.book().place(e.users().get(buyerId), OrderSide.Bid, OrderType.Limit, TimeInForce.GTC, 85, 2, 8).join();
+            symbol.book().place(e.users().get(sellerId), OrderSide.Ask, OrderType.Limit, TimeInForce.IOC, 85, 1, 9).join();
+            var triggered = stop.snapshot().join();
+            assertEquals(ConditionalOrderStatus.Activated, triggered.status());
+            assertEquals(85, triggered.triggeredPrice());
+            assertEquals(ConditionalOrderStatus.Cancelled, profit.snapshot().join().status());
+            var execution = e.orders().get(triggered.orderId()).snapshot().join();
+            assertEquals(1, execution.filling().filled());
+            assertEquals(2, execution.quantity());
+        }
     }
 
     @Test

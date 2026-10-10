@@ -15,10 +15,6 @@ import java.util.function.*;
 
 public class GuiActions
 {
-    private GuiActions()
-    {
-    }
-
     public static ServerUser user(TradingGui gui)
     {
         return gui.getUser().orElseThrow(() -> new IllegalStateException("gui.capitalmc.account.login_required"));
@@ -43,6 +39,12 @@ public class GuiActions
     public static void error(TradingGui gui, Throwable error)
     {
         message(gui, "ui.error", ExchangeMessages.error(gui.getPlayer(), error));
+    }
+
+    public static <T> CompletableFuture<Optional<T>> input(TradingGui gui, String prompt, Function<String, T> parser)
+    {
+        return input(gui, prompt, parser, value -> {
+        });
     }
 
     public static <T> CompletableFuture<Optional<T>> input(TradingGui gui, String prompt,

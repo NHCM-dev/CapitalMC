@@ -7,6 +7,10 @@ import nhcm.advmatch.command.account.*;
 import nhcm.advmatch.command.contract.AddMargin;
 import nhcm.advmatch.command.order.CancelOrder;
 import nhcm.advmatch.command.order.PlaceOrder;
+import nhcm.advmatch.command.order.PlaceConditionalOrder;
+import nhcm.advmatch.command.order.ModifyConditionalOrder;
+import nhcm.advmatch.command.order.CancelConditionalOrder;
+import nhcm.advmatch.model.ConditionalOrderRequest;
 import nhcm.advmatch.command.persistence.Flush;
 import nhcm.advmatch.model.AccountType;
 import nhcm.advmatch.model.BalanceDelta;
@@ -29,7 +33,7 @@ import java.util.function.Consumer;
 /**
  * Audited, idempotent exchange mutations. In-doubt commands remain in the journal for reconciliation.
  */
-public final class SettlementService
+public class SettlementService
 {
     public record Mutation(long requestId, CommandReceipt receipt)
     {
@@ -330,6 +334,48 @@ public final class SettlementService
         }, ApplicationExecutors.IO));
     }
 
+    public CompletableFuture<CommandReceipt> placeConditional(ServerUser user, ConditionalOrderRequest ticket)
+    {
+        return exchange.symbols().get(ticket.symbolId()).snapshot().thenCompose(symbol -> {
+            if (assets != null && (!assets.enabled(symbol.baseAssetId()) || !assets.enabled(symbol.quoteAssetId())))
+            {
+                throw new IllegalArgumentException("ui.asset.disabled");
+            }
+            return UserUtil.getUser(user);
+        }).thenComposeAsync(backend -> {
+            var request = ticket.withUserId(backend.id()).withTimestamp(System.currentTimeMillis());
+            long id = begin("PLACE_CONDITIONAL", backend.id(), request.symbolId(), 0, request.quantity(), entry -> entry.add("ticket", new Gson().toJsonTree(request)));
+            return accepted(exchange.submit(new PlaceConditionalOrder(request, id)), id);
+        }, ApplicationExecutors.IO);
+    }
+
+    public CompletableFuture<CommandReceipt> cancelConditional(ServerUser user, long conditional)
+    {
+        return UserUtil.getUser(user).thenCompose(backend -> exchange.conditionalOrders().get(conditional).snapshot().thenComposeAsync(view -> {
+            if (view.request().userId() != backend.id())
+            {
+                throw new SecurityException("ui.conditional.owner");
+            }
+            long id = begin("CANCEL_CONDITIONAL", backend.id(), conditional, 0, 0);
+            return accepted(exchange.submit(new CancelConditionalOrder(backend.id(), conditional, System.currentTimeMillis(), id)), id);
+        }, ApplicationExecutors.IO));
+    }
+
+    public CompletableFuture<CommandReceipt> modifyConditional(ServerUser user, long conditional, long trigger, long price, long quantity)
+    {
+        return UserUtil.getUser(user).thenCompose(backend -> exchange.conditionalOrders().get(conditional).snapshot().thenComposeAsync(view -> {
+            if (view.request().userId() != backend.id())
+            {
+                throw new SecurityException("ui.conditional.owner");
+            }
+            long id = begin("MODIFY_CONDITIONAL", backend.id(), conditional, 0, quantity, entry -> {
+                entry.addProperty("trigger", trigger);
+                entry.addProperty("price", price);
+            });
+            return accepted(exchange.submit(new ModifyConditionalOrder(backend.id(), conditional, trigger, price, quantity, System.currentTimeMillis(), id)), id);
+        }, ApplicationExecutors.IO));
+    }
+
     private long begin(String type, long source, long target, long asset, long amount)
     {
         return begin(type, source, target, asset, amount, entry -> {
@@ -381,15 +427,29 @@ public final class SettlementService
         {
             return CompletableFuture.failedFuture(new IllegalArgumentException("Margin must be positive"));
         }
+        return changeMargin(user, position, amount);
+    }
+
+    public CompletableFuture<CommandReceipt> removeMargin(ServerUser user, long position, long amount)
+    {
+        if (amount <= 0)
+        {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("ui.position.margin_positive"));
+        }
+        return UserUtil.getUser(user).thenCompose(backend -> changeMargin(backend.id(), position, Math.negateExact(amount)));
+    }
+
+    private CompletableFuture<CommandReceipt> changeMargin(long user, long position, long amount)
+    {
         return exchange.positions().find(position).thenCompose(value -> value.snapshot()).thenComposeAsync(view -> {
             if (view.userId() != user)
             {
                 throw new SecurityException("Position belongs to another user");
             }
-            long request = begin("ADD_MARGIN", user, position, 0, amount, entry -> {
+            long request = begin(amount > 0 ? "ADD_MARGIN" : "REMOVE_MARGIN", user, position, 0, amount, entry -> {
                 entry.addProperty("symbol", view.symbolId());
                 entry.addProperty("actor", Long.toString(user));
-                entry.addProperty("reason", "User requested additional position margin");
+                entry.addProperty("reason", amount > 0 ? "User requested additional position margin" : "User requested margin reduction");
             });
             return accepted(exchange.submit(new AddMargin(position, user, view.symbolId(), amount, request)), request);
         }, ApplicationExecutors.IO);

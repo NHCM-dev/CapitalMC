@@ -7,6 +7,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.permissions.Permissions;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -23,6 +24,9 @@ import nhcm.capitalmc.gui.subgui.ListSymbols;
 import nhcm.capitalmc.gui.subgui.account.*;
 import nhcm.capitalmc.gui.subgui.account.AccountPage;
 import nhcm.capitalmc.gui.subgui.trading.ActivityPage;
+import nhcm.capitalmc.gui.subgui.trading.PositionPage;
+import nhcm.capitalmc.gui.subgui.trading.ConditionalPage;
+import nhcm.capitalmc.gui.subgui.trading.ConditionalTicketPage;
 import nhcm.capitalmc.gui.subgui.trading.HistoryPage;
 import nhcm.capitalmc.gui.subgui.trading.SymbolInfoPage;
 import nhcm.capitalmc.gui.subgui.trading.TradeContractPage;
@@ -57,7 +61,31 @@ public class TradingGui extends SimpleGui
     private final Map<PageType, BaseSubGui> pages;
     private final Deque<PageType> history = new ArrayDeque<>();
     private PageType currentPage = PageType.HOME;
+    private boolean loginNoticeShown;
     private long selectedAsset;
+    private long selectedPosition;
+    private long selectedConditional;
+
+    public long getSelectedPosition()
+    {
+        return selectedPosition;
+    }
+
+    public void selectPosition(long value)
+    {
+        selectedPosition = value;
+    }
+
+    public long getSelectedConditional()
+    {
+        return selectedConditional;
+    }
+
+    public void selectConditional(long value)
+    {
+        selectedConditional = value;
+    }
+
     private SymbolView selectedSymbol;
     private final BookSettings bookSettings = new BookSettings();
 
@@ -126,6 +154,9 @@ public class TradingGui extends SimpleGui
                 Map.entry(PageType.PEG, new PegPage(this)),
                 Map.entry(PageType.ORDERS, new ActivityPage(this, PageType.ORDERS)),
                 Map.entry(PageType.POSITIONS, new ActivityPage(this, PageType.POSITIONS)),
+                Map.entry(PageType.POSITION, new PositionPage(this)),
+                Map.entry(PageType.CONDITIONALS, new ConditionalPage(this)),
+                Map.entry(PageType.CONDITIONAL_TICKET, new ConditionalTicketPage(this)),
                 Map.entry(PageType.ORDER_HISTORY, new HistoryPage(this, PageType.ORDER_HISTORY)),
                 Map.entry(PageType.POSITION_HISTORY, new HistoryPage(this, PageType.POSITION_HISTORY)),
                 Map.entry(PageType.TRADES, new HistoryPage(this, PageType.TRADES)),
@@ -176,6 +207,11 @@ public class TradingGui extends SimpleGui
         {
             throw new IllegalArgumentException("Page is not implemented: " + page);
         }
+        if (requiresLogin(page) && getUser().isEmpty())
+        {
+            page = PageType.HOME;
+            history.clear();
+        }
         if (page != currentPage)
         {
             history.push(currentPage);
@@ -203,8 +239,52 @@ public class TradingGui extends SimpleGui
         renderPage();
     }
 
+    private boolean requiresLogin(PageType page)
+    {
+        return switch (page)
+        {
+            case HOME, ACCESS -> false;
+            case ADMIN -> !getPlayer().permissions().hasPermission(Permissions.COMMANDS_OWNER);
+            default -> true;
+        };
+    }
+
+    private void notifyLoginRequired()
+    {
+        if (getUser().isPresent())
+        {
+            loginNoticeShown = false;
+        }
+        else if (!loginNoticeShown && currentPage != PageType.ADMIN)
+        {
+            GuiActions.message(this, "ui.access.required");
+            loginNoticeShown = true;
+        }
+    }
+
+    @Override
+    public boolean open()
+    {
+        refresh();
+        boolean opened = super.open();
+        if (opened)
+        {
+            notifyLoginRequired();
+        }
+        return opened;
+    }
+
     private void renderPage()
     {
+        if (requiresLogin(currentPage) && getUser().isEmpty())
+        {
+            currentPage = PageType.HOME;
+            history.clear();
+        }
+        if (isOpen())
+        {
+            notifyLoginRequired();
+        }
         rendered = new GuiElement[getSize()];
         Component title = text(getPlayer(), currentPage.getTitleKey());
         if (!title.equals(getTitle()))

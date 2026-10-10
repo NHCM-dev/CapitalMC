@@ -27,6 +27,11 @@ public final class GameServices
     {
         this.server = server;
         state = new ServiceState(FabricLoader.getInstance().getGameDir().resolve("capitalmc/services.json"));
+        CapitalMC.serverUserManager.setAccessPolicy(user -> {
+            var restrictions = state.section("userRestrictions").getAsJsonObject("userRestrictions");
+            var restriction = restrictions == null ? null : restrictions.getAsJsonObject(user.getUuid().toString());
+            return restriction == null || !restriction.get("banned").getAsBoolean();
+        });
         assets = new McAssetRegistry(this);
         settlements = new SettlementService(this);
         currency = new CurrencyService(this);

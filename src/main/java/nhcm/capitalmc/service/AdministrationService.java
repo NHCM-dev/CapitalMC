@@ -156,6 +156,8 @@ public final class AdministrationService
             case "peg-config", "peg-human" -> 10;
             case "asset-units", "lot" -> 4;
             case "reserve-in", "reserve-out" -> 3;
+            case "ban", "unban" -> 1;
+            case "balance-add", "balance-remove" -> 4;
             case "checkpoint" -> 0;
             case "symbol" -> -1;
             default -> throw new IllegalArgumentException("Unsupported administration action: " + action);
@@ -203,6 +205,45 @@ public final class AdministrationService
     {
         switch (action)
         {
+            case "ban", "unban" ->
+            {
+                var user = CapitalMC.serverUserManager.findByUsername(a[0]).orElseThrow(() -> new RejectedBeforeMutation("cli.user.unknown"));
+                return services.state.updateAsync(root -> {
+                    var restrictions = root.has("userRestrictions") ? root.getAsJsonObject("userRestrictions") : new JsonObject();
+                    var entry = new JsonObject();
+                    entry.addProperty("banned", action.equals("ban"));
+                    entry.addProperty("operator", operator);
+                    entry.addProperty("reason", reason);
+                    entry.addProperty("timestamp", System.currentTimeMillis());
+                    restrictions.add(user.getUuid().toString(), entry);
+                    root.add("userRestrictions", restrictions);
+                }).thenCompose(unused -> services.onServer(() -> {
+                    if (action.equals("ban"))
+                    {
+                        for (UUID player : CapitalMC.serverUserManager.playersUsing(user.getUuid()))
+                        {
+                            services.items.cancelSelection(player);
+                            CapitalMC.guiInputManager.cancel(player);
+                        }
+                        CapitalMC.serverUserManager.revokeSessions(user.getUuid());
+                    }
+                    return null;
+                }));
+            }
+            case "balance-add", "balance-remove" ->
+            {
+                var user = CapitalMC.serverUserManager.findByUsername(a[0]).orElseThrow(() -> new RejectedBeforeMutation("cli.user.unknown"));
+                var asset = asset(a[2]);
+                long amount = asset.parse(a[3]);
+                if (amount <= 0)
+                {
+                    throw new RejectedBeforeMutation("ui.trade.quantity_step");
+                }
+                var backend = CapitalMC.exchange.users().get(user.getExchangeUserId());
+                var account = a[1].equals("spot") ? backend.spotAccount() : backend.contractAccount();
+                return account.thenCompose(value -> services.settlements.adjustment(value.id(), asset.id(), action.equals("balance-add") ? amount : -amount,
+                                                                                    "ADMIN_ADJUSTMENT", operator, reason, null));
+            }
             case "bind", "unbind", "display", "asset-enable", "asset-disable" ->
             {
                 var asset = asset(a[0]);

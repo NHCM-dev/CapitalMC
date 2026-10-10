@@ -6,6 +6,15 @@ import eu.pb4.sgui.api.ClickType;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
+import net.fabricmc.loader.api.FabricLoader;
+import nhcm.advmatch.model.BalanceView;
+import nhcm.advmatch.model.ObservationQuery;
+import nhcm.advmatch.model.ReadResponse;
+import nhcm.advmatch.model.ReadCursor;
+import nhcm.advmatch.object.Symbol;
+import nhcm.advmatch.command.read.ReadBalances;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.suggestion.Suggestions;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.minecraft.core.*;
 import net.minecraft.core.component.DataComponents;
@@ -41,6 +50,11 @@ import nhcm.advmatch.model.AccountType;
 import nhcm.advmatch.model.AuditReport;
 import nhcm.advmatch.model.ContractOrderOptions;
 import nhcm.advmatch.model.ContractSpec;
+import nhcm.advmatch.model.ConditionalOrderView;
+import nhcm.advmatch.model.ConditionalOrderStatus;
+import nhcm.advmatch.model.ConditionalOrderKind;
+import nhcm.advmatch.command.contract.UpdateMarkPrice;
+import nhcm.capitalmc.exchange.PositionOrders;
 import nhcm.advmatch.model.MarginMode;
 import nhcm.advmatch.model.OrderSide;
 import nhcm.advmatch.model.OrderType;
@@ -75,7 +89,7 @@ public final class CapitalGameTests
     public void batchDropsAccumulateAndChangedPreviewReleasesInterception(GameTestHelper helper)
     {
         var test = new Steps(helper);
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             return CapitalMC.serverUserManager.registerAsync("Batch", "batch_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16), "", test.player.getUUID());
@@ -139,7 +153,7 @@ public final class CapitalGameTests
         var test = new Steps(helper);
         var choice = new ItemBankService.DepositSelection[1];
         var positions = new BlockPos[2];
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             var pos = helper.absolutePos(new BlockPos(3, 2, 3));
@@ -195,7 +209,7 @@ public final class CapitalGameTests
         var test = new Steps(helper);
         var loaded = new CompletableFuture<Void>();
         var calculated = new CompletableFuture<Void>();
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             return CapitalMC.serverUserManager.registerAsync("Capacity", "cap_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16), "", test.player.getUUID());
@@ -297,7 +311,7 @@ public final class CapitalGameTests
         var counter = new ServerUser[1];
         var loaded = new CompletableFuture<Void>();
         var filled = new CompletableFuture<Void>();
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             return CapitalMC.serverUserManager.registerAsync("Market test", "market_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16), "", test.player.getUUID());
@@ -391,7 +405,7 @@ public final class CapitalGameTests
         var shortSubmitted = new CompletableFuture<Void>();
         int[] waiting = {0};
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         // The binding test briefly halts the entire exchange; let it finish before placing orders.
         test.add(() -> {
             var settled = new CompletableFuture<Void>();
@@ -553,7 +567,7 @@ public final class CapitalGameTests
     public void repliesArePrivateAndCredentialsAreNotEchoed(GameTestHelper helper)
     {
         var test = new Steps(helper);
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             var player = (MessagePlayer) test.player;
@@ -618,7 +632,7 @@ public final class CapitalGameTests
         var test = new Steps(helper);
         String name = "picker_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         var asset = new McAssetRegistry.Asset[1];
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             test.player.level().getServer().getPlayerList().op(new NameAndId(test.player.getGameProfile()), Optional.of(LevelBasedPermissionSet.OWNER), Optional.of(false));
@@ -677,7 +691,7 @@ public final class CapitalGameTests
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         var base = new McAssetRegistry.Asset[1];
         var quote = new McAssetRegistry.Asset[1];
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             return CapitalMC.serverUserManager.registerAsync("Peg", "peg_" + suffix, "", test.player.getUUID());
@@ -774,7 +788,7 @@ public final class CapitalGameTests
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         var asset = new McAssetRegistry.Asset[1];
         var market = new Symbol[1];
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             return CapitalMC.serverUserManager.registerAsync("Units", "units_" + suffix, "", test.player.getUUID());
@@ -880,13 +894,58 @@ public final class CapitalGameTests
         });
     }
 
+    @GameTest(maxTicks = 2400)
+    public void loggedOutGuiShowsOnlyLoginEntryAndClearsProtectedNavigation(GameTestHelper helper)
+    {
+        var test = new Steps(helper);
+        test.add(CapitalGameTests::testAssets);
+        test.add(() -> {
+            test.player = survivalPlayer(helper);
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            gui.open();
+            check(gui.getGuiElement(22).getItemStackForDisplay(gui).is(Items.PLAYER_HEAD), "Login entry is missing");
+            check(gui.getGuiElement(20) == null && gui.getGuiElement(24) == null && gui.getGuiElement(8) == null, "Logged-out home exposes business entries");
+            gui.refresh();
+            gui.refresh();
+            long notices = ((MessagePlayer) test.player).messages.stream().filter(message -> message.contains("Please log in to a trading account first")).count();
+            check(notices == 1, "Login notice is missing or repeated by automatic refresh");
+            gui.showPage(PageType.LIST_SYMBOLS);
+            check(gui.getCurrentPage() == PageType.HOME && !gui.canGoBack(), "Logged-out navigation reaches a protected page");
+            click(gui, 22);
+            check(gui.getCurrentPage() == PageType.ACCESS && gui.getGuiElement(20) != null && gui.getGuiElement(22) != null, "Login entry does not open login and registration");
+            check(gui.getGuiElement(24) == null, "Logged-out account shows a logout action");
+            return CapitalMC.serverUserManager.registerAsync("Login gate", "gate_" + UUID.randomUUID().toString().replace("-", ""), "", test.player.getUUID());
+        });
+        test.add(() -> {
+            test.user = (ServerUser) test.last;
+            CapitalMC.serverUserManager.activateVerified(test.player.getUUID(), test.user);
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            gui.showPage(PageType.HOME);
+            check(gui.getGuiElement(20) != null && gui.getGuiElement(24) != null, "Login does not restore trading entries");
+            gui.showPage(PageType.MY_ACCOUNT);
+            CapitalMC.serverUserManager.logout(test.player.getUUID());
+            gui.refresh();
+            check(gui.getCurrentPage() == PageType.HOME && !gui.canGoBack(), "Logout retains protected navigation history");
+            check(gui.getGuiElement(20) == null && gui.getGuiElement(24) == null, "Logout leaves protected controls visible");
+            long notices = ((MessagePlayer) test.player).messages.stream().filter(message -> message.contains("Please log in to a trading account first")).count();
+            check(notices == 2, "Logout does not renew the login notice");
+            return CompletableFuture.completedFuture(null);
+        });
+        test.run();
+    }
+
     @GameTest(maxTicks = 1200)
     public void selectedOptionsGlowAndKeepTheirCallbacks(GameTestHelper helper)
     {
         var test = new Steps(helper);
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
+            return CapitalMC.serverUserManager.registerAsync("Filter test", "filter_" + UUID.randomUUID().toString().replace("-", ""), "", test.player.getUUID());
+        });
+        test.add(() -> {
+            test.user = (ServerUser) test.last;
+            CapitalMC.serverUserManager.activateVerified(test.player.getUUID(), test.user);
             var gui = CapitalMC.guiManager.getTradingGui(test.player);
             gui.showPage(PageType.LIST_SYMBOLS);
             gui.open();
@@ -910,7 +969,7 @@ public final class CapitalGameTests
         var test = new Steps(helper);
         String name = "gui_" + UUID.randomUUID().toString().replace("-", "");
         var registered = new CompletableFuture<McAssetRegistry.Asset>();
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             test.player.level().getServer().getPlayerList().op(new NameAndId(test.player.getGameProfile()), Optional.of(LevelBasedPermissionSet.OWNER), Optional.of(false));
@@ -961,7 +1020,7 @@ public final class CapitalGameTests
         var market = new SymbolView[1];
         var loaded = new CompletableFuture<Void>();
         var bookLoaded = new CompletableFuture<Void>();
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             return CapitalMC.serverUserManager.registerAsync("Book Test", "book_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16), "", test.player.getUUID());
@@ -1064,7 +1123,7 @@ public final class CapitalGameTests
         var base = new McAssetRegistry.Asset[1];
         var market = new SymbolView[1];
         String suffix = UUID.randomUUID().toString().replace("-", "");
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             test.player.level().getServer().getPlayerList().op(new NameAndId(test.player.getGameProfile()), Optional.of(LevelBasedPermissionSet.OWNER), Optional.of(false));
@@ -1158,7 +1217,7 @@ public final class CapitalGameTests
         var test = new Steps(helper);
         var selection = new ItemBankService.DepositSelection[1];
         var market = new long[1];
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             return CapitalMC.serverUserManager.registerAsync("Binding Test", "test_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16), "", test.player.getUUID());
@@ -1231,7 +1290,7 @@ public final class CapitalGameTests
     public void chatRetryCancelAndSessionChange(GameTestHelper helper)
     {
         var test = new Steps(helper);
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             return CapitalMC.serverUserManager.registerAsync("Input Test", "test_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16), "", test.player.getUUID());
@@ -1305,7 +1364,7 @@ public final class CapitalGameTests
     public void batchDepositChatCancellationReleasesSelection(GameTestHelper helper)
     {
         var test = new Steps(helper);
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             return CapitalMC.serverUserManager.registerAsync("Batch Chat", "test_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16), "", test.player.getUUID());
@@ -1360,7 +1419,7 @@ public final class CapitalGameTests
     public void enchantedBookRetainsComponentsAndStacksTo64(GameTestHelper helper)
     {
         var test = new Steps(helper);
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             var pos = helper.absolutePos(new BlockPos(3, 2, 3));
@@ -1407,7 +1466,7 @@ public final class CapitalGameTests
     public void physicalCustodyAndGui(GameTestHelper helper)
     {
         var test = new Steps(helper);
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             test.player.setGameMode(GameType.SURVIVAL);
@@ -1471,7 +1530,7 @@ public final class CapitalGameTests
     public void changedSelectionIsRejected(GameTestHelper helper)
     {
         var test = new Steps(helper);
-        test.add(() -> GameServices.get().ready());
+        test.add(CapitalGameTests::testAssets);
         test.add(() -> {
             test.player = survivalPlayer(helper);
             test.player.setGameMode(GameType.SURVIVAL);
@@ -1507,6 +1566,450 @@ public final class CapitalGameTests
         test.run();
     }
 
+    // This fixture shares the exchange with a global-halt test that finishes within 1200 ticks.
+    @GameTest(maxTicks = 12000, setupTicks = 2000)
+    public void typedCommandsPermissionsAdjustmentsAndBans(GameTestHelper helper)
+    {
+        var test = new Steps(helper);
+        var name = "cli_" + UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+        var amountAsset = new McAssetRegistry.Asset[1];
+        long[] symbolId = {0};
+        test.add(CapitalGameTests::testAssets);
+        test.add(() -> {
+            test.player = survivalPlayer(helper);
+            var source = test.player.createCommandSourceStack();
+            var dispatcher = source.getServer().getCommands().getDispatcher();
+            check(dispatcher.getRoot().getChild("trade").canUse(source), "Ordinary player cannot access trade command");
+            check(dispatcher.getRoot().getChild("capital") == null, "Removed capital command is still registered");
+            check(dispatcher.getRoot().getChild("order").canUse(source), "Standalone order command is unavailable");
+            check(!dispatcher.getRoot().getChild("cmcadmin").canUse(source), "Ordinary player can access administration");
+            return CapitalMC.serverUserManager.registerAsync("CLI Test", name, "", test.player.getUUID());
+        });
+        test.add(() -> {
+            test.user = (ServerUser) test.last;
+            CapitalMC.serverUserManager.activateVerified(test.player.getUUID(), test.user);
+            return GameServices.get().assets.registerElectronic(name, "CLI Decimal", 2, new ItemStack(Items.PAPER));
+        });
+        test.add(() -> {
+            amountAsset[0] = (McAssetRegistry.Asset) test.last;
+            var source = test.player.createCommandSourceStack();
+            var dispatcher = source.getServer().getCommands().getDispatcher();
+            return dispatcher.getCompletionSuggestions(dispatcher.parse("user balance ", source));
+        });
+        test.add(() -> {
+            var suggestions = (Suggestions) test.last;
+            check(suggestions.getList().stream().anyMatch(v -> v.getText().equals(name)), "Registered asset is absent from user completion");
+            test.player.level().getServer().getPlayerList().op(new NameAndId(test.player.getGameProfile()), Optional.of(LevelBasedPermissionSet.OWNER), Optional.of(false));
+            var player = (MessagePlayer) test.player;
+            player.messages.clear();
+            runCommand(test.player, "cmcadmin help balance");
+            check(player.messages.stream().anyMatch(v -> v.contains("cmcadmin balance add spot")), "Typed help does not describe balance syntax");
+            runCommand(test.player, "cmcadmin balance add spot " + name + " " + name + " 1.25 CLI grant");
+            var done = new CompletableFuture<Void>();
+            test.poll = () -> {
+                if (player.messages.stream().anyMatch(v -> v.contains("balance add spot") && v.contains("CLI grant")))
+                {
+                    done.complete(null);
+                }
+            };
+            return done;
+        });
+        test.add(() -> {
+            test.poll = () -> {
+            };
+            return BalanceUtil.spotAvailable(test.user, amountAsset[0].id());
+        });
+        test.add(() -> {
+            check((Long) test.last == 125L, "Decimal admin grant was not converted to raw units");
+            var entries = GameServices.get().state.snapshot().getAsJsonObject("commands");
+            check(entries.entrySet().stream().anyMatch(entry -> {
+                var value = entry.getValue().getAsJsonObject();
+                return value.has("type") && value.get("type").getAsString().equals("ADMIN_ADJUSTMENT")
+                       && value.has("status") && value.get("status").getAsString().equals("DURABLE");
+            }), "Adjustment was not durably audited");
+            var source = test.player.createCommandSourceStack();
+            var dispatcher = source.getServer().getCommands().getDispatcher();
+            return dispatcher.getCompletionSuggestions(dispatcher.parse("cmcadmin market rules set 1 selfTradePrevention ", source));
+        });
+        test.add(() -> {
+            var suggestions = (Suggestions) test.last;
+            check(suggestions.getList().stream().anyMatch(v -> v.getText().equals("CancelBoth")), "Rule enum completion is missing");
+            return GameServices.get().assets.registerElectronic(name + "_base", "CLI Base", 0, new ItemStack(Items.PAPER));
+        });
+        test.add(() -> {
+            var base = (McAssetRegistry.Asset) test.last;
+            return GameServices.get().markets.createSpot(name, base.id(), amountAsset[0].id());
+        });
+        test.add(() -> {
+            long symbol = ((Symbol) test.last).id();
+            symbolId[0] = symbol;
+            return awaitReply(test, "Limit order submitted", () -> runCommand(test.player, "user order limit " + symbol + " buy 1.25 1"));
+        });
+        test.add(() -> {
+            test.poll = () -> {
+            };
+            return TradeUtil.orderPage(test.user, false, 0, new ReadCursor());
+        });
+        test.add(() -> {
+            var rows = (ReadResponse<?>) test.last;
+            var order = (OrderView) rows.values().getFirst();
+            check(order.price() == 125 && order.quantity() == 1, "CLI limit order price/quantity conversion failed");
+            var player = (MessagePlayer) test.player;
+            player.messages.clear();
+            runCommand(player, "order cancel " + order.orderId());
+            var done = new CompletableFuture<Void>();
+            test.poll = () -> {
+                if (player.messages.stream().anyMatch(v -> v.contains("cancelled")))
+                {
+                    done.complete(null);
+                }
+            };
+            return done;
+        });
+        test.add(() -> CapitalMC.exchange.symbols().get(symbolId[0]).snapshot());
+        test.add(() -> {
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            gui.showTrading((SymbolView) test.last);
+            gui.showPage(PageType.CONDITIONAL_TICKET);
+            gui.open();
+            return awaitReply(test, "Conditional order submitted", () -> {
+                click(gui, 0);
+                click(gui, 18);
+                chat(test.player, "2.00");
+                click(gui, 20);
+                chat(test.player, "1");
+                click(gui, 8);
+                Runnable reply = test.poll;
+                test.poll = () -> {
+                    if (((MessagePlayer) test.player).messages.stream().anyMatch(message -> message.contains("No funds are reserved while waiting")))
+                    {
+                        chat(test.player, "yes");
+                        test.poll = reply;
+                    }
+                    else
+                    {
+                        reply.run();
+                    }
+                };
+            });
+        });
+        test.add(() -> CapitalMC.exchange.conditionalOrders().list(new ObservationQuery().withUserId(test.user.getExchangeUserId()).withIncludeTerminal(false)));
+        test.add(() -> {
+            var row = ((ReadResponse<ConditionalOrderView>) test.last).values().getFirst();
+            check(row.request().triggerPrice() == 200 && row.request().quantity() == 1 && row.request().contractOptions() == null,
+                  "Spot conditional ticket did not preserve units or used contract options");
+            return awaitReply(test, "cancelled", () -> runCommand(test.player, "conditional cancel " + row.conditionalOrderId()));
+        });
+        test.add(() -> {
+            test.poll = () -> {
+            };
+            GameServices.get().items.beginBatchSelection(test.player, test.user, false, Duration.ofSeconds(30));
+            runCommand(test.player, "cmcadmin user ban " + name + " CLI restriction");
+            var done = new CompletableFuture<Void>();
+            test.poll = () -> {
+                var data = GameServices.get().state.snapshot().getAsJsonObject("userRestrictions");
+                if (data != null && data.has(test.user.getUuid().toString()) && CapitalMC.serverUserManager.playersUsing(test.user.getUuid()).isEmpty())
+                {
+                    done.complete(null);
+                }
+            };
+            return done;
+        });
+        test.add(() -> {
+            test.poll = () -> {
+            };
+            check(!GameServices.get().items.interceptDrop(test.player, false), "Banned account kept the drop interception session");
+            return CapitalMC.serverUserManager.authenticateAsync(name, "").handle((result, error) -> {
+                check(error != null, "Banned account was authenticated");
+                return null;
+            });
+        });
+        test.add(() -> GameServices.get().administration.action("unban", new String[]{name}, new ItemStack(Items.PAPER), "gametest", "CLI unban"));
+        test.add(() -> CapitalMC.serverUserManager.authenticateAsync(name, ""));
+        test.add(() -> {
+            check(((Optional<?>) test.last).isPresent(), "Unbanned account cannot authenticate");
+            return ApplicationExecutors.io(() -> new ServiceState(FabricLoader.getInstance().getGameDir().resolve("capitalmc/services.json")).snapshot()).thenCompose(data -> {
+                check(!data.getAsJsonObject("userRestrictions").getAsJsonObject(test.user.getUuid().toString()).get("banned").getAsBoolean(), "Restriction was not persisted");
+                return CapitalMC.exchange.users().get(test.user.getExchangeUserId()).spotAccount().thenCompose(account -> CapitalMC.exchange.submit(new ReadBalances(new ObservationQuery().withAccountId(account.id()).withAssetId(amountAsset[0].id()))).thenApply(rows -> rows.values().getFirst()));
+            });
+        });
+        test.add(() -> {
+            check(((BalanceView) test.last).active() == 125L, "Ban or unban changed financial balances");
+            return CompletableFuture.completedFuture(null);
+        });
+        test.run();
+    }
+
+    @GameTest(maxTicks = 16000)
+    public void positionPageProtectionOcoAndClosingModes(GameTestHelper helper)
+    {
+        var test = new Steps(helper);
+        var counter = new ServerUser[1];
+        var market = new SymbolView[1];
+        var position = new PositionView[1];
+        long[] conditional = {0};
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        test.add(CapitalGameTests::testAssets);
+        test.add(() -> {
+            var done = new CompletableFuture<Void>();
+            int[] ticks = {0};
+            test.poll = () -> {
+                if (++ticks[0] >= 200)
+                {
+                    done.complete(null);
+                }
+            };
+            return done;
+        });
+        test.add(() -> {
+            test.poll = () -> {
+            };
+            test.player = survivalPlayer(helper);
+            return CapitalMC.serverUserManager.registerAsync("Protect", "protect_" + suffix, "", test.player.getUUID());
+        });
+        test.add(() -> {
+            test.user = (ServerUser) test.last;
+            CapitalMC.serverUserManager.activateVerified(test.player.getUUID(), test.user);
+            return CapitalMC.serverUserManager.registerAsync("Counter", "protect_counter_" + suffix, "", UUID.randomUUID());
+        });
+        test.add(() -> {
+            counter[0] = (ServerUser) test.last;
+            return GameServices.get().assets.registerElectronic("protect_base_" + suffix, "Protect base", 0, new ItemStack(Items.PAPER));
+        });
+        test.add(() -> {
+            test.diamond = ((McAssetRegistry.Asset) test.last).id();
+            return GameServices.get().assets.registerElectronic("protect_quote_" + suffix, "Protect quote", 0, new ItemStack(Items.PAPER));
+        });
+        test.add(() -> {
+            test.gold = ((McAssetRegistry.Asset) test.last).id();
+            return GameServices.get().markets.createFuture("Protect " + suffix, test.diamond, test.gold, 100,
+                                                           new ContractSpec().withDefaultLeverage(2).withMakerFeeRate(0).withTakerFeeRate(0).withPriceBandRate(500000)
+                                                                             .withExpiryTimestamp(System.currentTimeMillis() + 86400000)).thenCompose(Symbol::snapshot);
+        });
+        test.add(() -> {
+            market[0] = (SymbolView) test.last;
+            var settlement = GameServices.get().settlements;
+            return settlement.account(test.user, AccountType.Contract).thenCompose(id -> settlement.update(id, test.gold, 10000))
+                             .thenCompose(unused -> settlement.account(counter[0], AccountType.Contract)).thenCompose(id -> settlement.update(id, test.gold, 10000));
+        });
+        test.add(() -> {
+            var options = new ContractOrderOptions().withLeverage(2).withMarginMode(MarginMode.Isolated);
+            var settlement = GameServices.get().settlements;
+            return settlement.place(counter[0], market[0].symbolId(), OrderSide.Ask, OrderType.Limit, TimeInForce.GTC, 100, 6, options)
+                             .thenCompose(unused -> settlement.place(test.user, market[0].symbolId(), OrderSide.Bid, OrderType.Limit, TimeInForce.IOC, 100, 6, options));
+        });
+        test.add(() -> TradeUtil.positions(test.user));
+        test.add(() -> {
+            position[0] = ((List<PositionView>) test.last).stream().filter(value -> !value.closed() && value.size() > 0).findFirst().orElseThrow();
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            gui.selectPosition(position[0].positionId());
+            gui.showPage(PageType.POSITION);
+            gui.open();
+            var done = new CompletableFuture<Void>();
+            test.poll = () -> {
+                gui.refresh();
+                if (gui.getGuiElement(0) != null && gui.getGuiElement(0).getItemStackForDisplay(gui).is(Items.NETHER_STAR))
+                {
+                    done.complete(null);
+                }
+            };
+            return done;
+        });
+        test.add(() -> {
+            test.poll = () -> {
+            };
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            var player = (MessagePlayer) test.player;
+            player.messages.clear();
+            click(gui, 0);
+            check(player.messages.stream().anyMatch(message -> message.contains("Close position") && message.contains("quantity 6")), "Market full close did not go directly to confirmation");
+            check(player.messages.stream().noneMatch(message -> message.contains("Enter") && message.contains("price")), "Market full close asked for a price");
+            chat(player, "cancel");
+            return awaitReply(test, "Margin added", () -> {
+                click(gui, 4);
+                chat(player, "20");
+                chat(player, "yes");
+            });
+        });
+        test.add(() -> awaitReply(test, "Margin reduced", () -> {
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            click(gui, 5);
+            chat(test.player, "10");
+            chat(test.player, "yes");
+        }));
+        test.add(() -> CapitalMC.exchange.positions().get(position[0].positionId()).snapshot());
+        test.add(() -> {
+            check(((PositionView) test.last).initialMargin() == position[0].initialMargin() + 10, "Margin add/remove did not conserve the requested change");
+            return GameServices.get().settlements.removeMargin(test.user, position[0].positionId(), 1000).handle((value, error) -> {
+                check(error != null, "Unsafe margin reduction succeeded");
+                return null;
+            });
+        });
+        test.add(() -> PositionOrders.owned(counter[0], position[0].positionId()).handle((value, error) -> {
+            check(error != null, "Another account can access the position");
+            return null;
+        }));
+        test.add(() -> {
+            boolean[] validated = {false};
+            return PositionOrders.close(test.user, position[0].positionId(), OrderType.Market, 0, 0, () -> {
+                validated[0] = true;
+                throw new IllegalStateException("ui.session.changed");
+            }).handle((value, error) -> {
+                check(validated[0] && error != null, "Expired position context was not checked before submission");
+                return null;
+            });
+        });
+        test.add(() -> CapitalMC.exchange.positions().get(position[0].positionId()).snapshot());
+        test.add(() -> {
+            check(((PositionView) test.last).size() == 6, "Expired position context changed the position");
+            return CompletableFuture.completedFuture(null);
+        });
+        test.add(() -> awaitReply(test, "Conditional order submitted", () -> {
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            click(gui, 19);
+            chat(test.player, "80");
+            chat(test.player, "yes");
+        }));
+        test.add(() -> CapitalMC.exchange.conditionalOrders().list(new ObservationQuery().withUserId(test.user.getExchangeUserId()).withIncludeTerminal(false)));
+        test.add(() -> {
+            var row = ((ReadResponse<ConditionalOrderView>) test.last).values().getFirst();
+            conditional[0] = row.conditionalOrderId();
+            check(row.request().contractOptions().reduceOnly() && row.request().contractOptions().positionId() == position[0].positionId(), "Position stop-loss is not bound reduce-only");
+            check(row.request().contractOptions().priceLimit() > 0, "Position market stop-loss has no guard");
+            return awaitReply(test, "modified", () -> runCommand(test.player, "conditional modify " + conditional[0] + " 85 6 0"));
+        });
+        test.add(() -> CapitalMC.exchange.conditionalOrders().get(conditional[0]).snapshot());
+        test.add(() -> {
+            check(((ConditionalOrderView) test.last).request().triggerPrice() == 85, "Standalone conditional modify did not update the trigger");
+            return awaitReply(test, "cancelled", () -> runCommand(test.player, "conditional cancel " + conditional[0]));
+        });
+        test.add(() -> awaitReply(test, "OCO pair submitted", () -> {
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            click(gui, 20);
+            chat(test.player, "110");
+            chat(test.player, "90");
+            chat(test.player, "yes");
+        }));
+        test.add(() -> CapitalMC.exchange.conditionalOrders().list(new ObservationQuery().withUserId(test.user.getExchangeUserId()).withIncludeTerminal(false)));
+        test.add(() -> {
+            var rows = ((ReadResponse<ConditionalOrderView>) test.last).values();
+            check(rows.size() == 2 && rows.stream().allMatch(row -> row.request().ocoOrderId() > 0), "Position OCO pair is not linked");
+            var options = new ContractOrderOptions().withLeverage(2).withMarginMode(MarginMode.Isolated);
+            return GameServices.get().settlements.place(counter[0], market[0].symbolId(), OrderSide.Bid, OrderType.Limit, TimeInForce.GTC, 110, 6, options)
+                                                 .thenCompose(unused -> CapitalMC.exchange.submit(new UpdateMarkPrice(market[0].symbolId(), 110, System.currentTimeMillis())));
+        });
+        test.add(() -> CapitalMC.exchange.conditionalOrders().list(new ObservationQuery().withUserId(test.user.getExchangeUserId()).withIncludeTerminal(true)));
+        test.add(() -> {
+            var rows = ((ReadResponse<ConditionalOrderView>) test.last).values();
+            check(rows.stream().anyMatch(row -> row.request().kind() == ConditionalOrderKind.TakeProfit && row.status() == ConditionalOrderStatus.Activated), "Take-profit did not activate");
+            check(rows.stream().filter(row -> row.request().kind() == ConditionalOrderKind.StopLoss).allMatch(row -> row.status() == ConditionalOrderStatus.Cancelled), "OCO stop-loss was not cancelled");
+            return CapitalMC.exchange.positions().get(position[0].positionId()).snapshot();
+        });
+        test.add(() -> {
+            check(((PositionView) test.last).closed(), "Take-profit market close did not close the selected position");
+            var options = new ContractOrderOptions().withLeverage(2).withMarginMode(MarginMode.Isolated);
+            return GameServices.get().settlements.place(counter[0], market[0].symbolId(), OrderSide.Ask, OrderType.Limit, TimeInForce.GTC, 110, 4, options)
+                                                 .thenCompose(unused -> GameServices.get().settlements.place(test.user, market[0].symbolId(), OrderSide.Bid, OrderType.Limit, TimeInForce.IOC, 110, 4, options));
+        });
+        test.add(() -> TradeUtil.positions(test.user));
+        test.add(() -> {
+            position[0] = ((List<PositionView>) test.last).stream().filter(value -> !value.closed() && value.size() > 0).findFirst().orElseThrow();
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            gui.selectPosition(position[0].positionId());
+            gui.refresh();
+            return GameServices.get().settlements.place(counter[0], market[0].symbolId(), OrderSide.Bid, OrderType.Limit, TimeInForce.GTC, 110, 4,
+                                                        new ContractOrderOptions().withLeverage(2).withMarginMode(MarginMode.Isolated));
+        });
+        test.add(() -> {
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            var done = new CompletableFuture<Void>();
+            test.poll = () -> {
+                gui.refresh();
+                if (gui.getGuiElement(22) != null && gui.getGuiElement(22).getItemStackForDisplay(gui).getHoverName().getString().contains("#" + position[0].positionId()))
+                {
+                    done.complete(null);
+                }
+            };
+            return done;
+        });
+        test.add(() -> awaitReply(test, "Closing order submitted", () -> {
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            click(gui, 1);
+            chat(test.player, "1");
+            chat(test.player, "yes");
+        }));
+        test.add(() -> CapitalMC.exchange.positions().get(position[0].positionId()).snapshot());
+        test.add(() -> {
+            check(((PositionView) test.last).size() == 3, "Partial market close did not preserve the remainder");
+            return awaitReply(test, "Closing order submitted", () -> {
+                var gui = CapitalMC.guiManager.getTradingGui(test.player);
+                click(gui, 2);
+                chat(test.player, "120");
+                check(((MessagePlayer) test.player).messages.stream().noneMatch(message -> message.contains("Enter quantity")), "Full limit close asked for quantity");
+                chat(test.player, "yes");
+            });
+        });
+        test.add(() -> TradeUtil.openOrders(test.user));
+        test.add(() -> {
+            var order = ((List<OrderView>) test.last).getFirst();
+            check(order.positionId() == position[0].positionId() && order.reduceOnly() && order.timeInForce() == TimeInForce.GTC && order.quantity() == 3 && order.price() == 120,
+                  "Full limit close did not use remaining size / GTC / reduce-only");
+            return GameServices.get().settlements.cancel(test.user, order.orderId(), System.currentTimeMillis());
+        });
+        test.add(() -> awaitReply(test, "Closing order submitted", () -> {
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            click(gui, 0);
+            chat(test.player, "yes");
+        }));
+        test.add(() -> CapitalMC.exchange.positions().get(position[0].positionId()).snapshot());
+        test.add(() -> {
+            check(((PositionView) test.last).closed(), "Full market close did not close the remainder");
+            var commands = GameServices.get().state.section("commands").getAsJsonObject("commands");
+            check(commands.entrySet().stream().map(entry -> entry.getValue().getAsJsonObject()).anyMatch(entry ->
+                                                                                                                 entry.get("type").getAsString().equals("REMOVE_MARGIN") && entry.get("status").getAsString().equals("DURABLE")), "Margin reduction lacks a durable audit");
+            test.poll = () -> {
+            };
+            return CompletableFuture.completedFuture(null);
+        });
+        test.run();
+    }
+
+    private static CompletableFuture<Void> awaitReply(Steps test, String expected, Runnable action)
+    {
+        var player = (MessagePlayer) test.player;
+        player.messages.clear();
+        var done = new CompletableFuture<Void>();
+        int[] ticks = {0};
+        test.poll = () -> {
+            if (++ticks[0] > 2000)
+            {
+                throw new AssertionError("Expected " + expected + "; current messages: " + player.messages);
+            }
+            if (player.messages.stream().anyMatch(message -> message.contains(expected)))
+            {
+                done.complete(null);
+            }
+            else if (player.messages.stream().anyMatch(message -> message.startsWith("[Failed]")))
+            {
+                throw new AssertionError("Command/GUI operation failed: " + player.messages);
+            }
+        };
+        action.run();
+        return done;
+    }
+
+    private static void runCommand(ServerPlayer player, String command)
+    {
+        try
+        {
+            var source = player.createCommandSourceStack();
+            source.getServer().getCommands().getDispatcher().execute(command, source);
+        } catch (CommandSyntaxException error)
+        {
+            throw new AssertionError(command, error);
+        }
+    }
+
     private static ServerPlayer survivalPlayer(GameTestHelper helper)
     {
         var profile = new GameProfile(UUID.randomUUID(), "test_" + UUID.randomUUID().toString().substring(0, 8));
@@ -1517,6 +2020,29 @@ public final class CapitalGameTests
         server.getPlayerList().placeNewPlayer(connection, player, CommonListenerCookie.createInitial(profile, false));
         player.setGameMode(GameType.SURVIVAL);
         return player;
+    }
+
+    private static CompletableFuture<Void> assetFixtures;
+
+    private static synchronized CompletableFuture<Void> testAssets()
+    {
+        if (assetFixtures == null)
+        {
+            assetFixtures = GameServices.get().ready()
+                                        .thenCompose(unused -> testItem("mc_diamond", "Diamond", Items.DIAMOND))
+                                        .thenCompose(unused -> testItem("mc_gold_ingot", "Gold Ingot", Items.GOLD_INGOT))
+                                        .thenCompose(unused -> testItem("mc_melon", "Melon Slice", Items.MELON_SLICE))
+                                        .thenCompose(unused -> GameServices.get().onServer(() ->
+                                                                                                   GameServices.get().assets.registerElectronic("cmc", "Capital Currency", 2, new ItemStack(Items.PAPER))))
+                                        .thenCompose(result -> result).thenApply(unused -> null);
+        }
+        return assetFixtures;
+    }
+
+    private static CompletableFuture<McAssetRegistry.Asset> testItem(String name, String displayName, Item item)
+    {
+        return GameServices.get().onServer(() -> GameServices.get().assets.registerItem(name, displayName, new ItemStack(item)))
+                           .thenCompose(result -> result);
     }
 
     private static void check(boolean condition, String message)

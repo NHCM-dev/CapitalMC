@@ -20,6 +20,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Predicate;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -31,6 +32,43 @@ public class ServerUserManager
 {
     public static final int MAX_ACCOUNTS_PER_UUID = 3;
     private volatile Map<UUID, ServerUser> usersById = Map.of();
+    private volatile Predicate<ServerUser> accessAllowed = user -> true;
+
+    public void setAccessPolicy(Predicate<ServerUser> policy)
+    {
+        accessAllowed = Objects.requireNonNull(policy);
+    }
+
+    public void requireAccess(ServerUser user)
+    {
+        if (!accessAllowed.test(user))
+        {
+            throw new IllegalStateException("cli.user.banned");
+        }
+    }
+
+    public List<UUID> playersUsing(UUID account)
+    {
+        synchronized (sessions)
+        {
+            return sessions.entrySet().stream().filter(entry -> entry.getValue().equals(account)).map(Map.Entry::getKey).toList();
+        }
+    }
+
+    public void revokeSessions(UUID account)
+    {
+        synchronized (sessions)
+        {
+            for (UUID player : List.copyOf(sessions.keySet()))
+            {
+                if (account.equals(sessions.get(player)))
+                {
+                    logout(player);
+                }
+            }
+        }
+    }
+
     private final Map<UUID, UUID> sessions = new ConcurrentHashMap<>();
     private final Map<UUID, Long> sessionVersions = new ConcurrentHashMap<>();
     private final Path storageFile;
@@ -178,7 +216,11 @@ public class ServerUserManager
     public CompletableFuture<Optional<ServerUser>> authenticateAsync(String username, String password)
     {
         ServerUser candidate = findByUsername(username).orElse(null);
-        return CompletableFuture.supplyAsync(() -> candidate != null && candidate.verifyPassword(password)
+        if (candidate != null && !accessAllowed.test(candidate))
+        {
+            return CompletableFuture.failedFuture(new IllegalStateException("cli.user.banned"));
+        }
+        return CompletableFuture.supplyAsync(() -> candidate != null && accessAllowed.test(candidate) && candidate.verifyPassword(password)
                                                    && usersById.get(candidate.getUuid()) == candidate ? Optional.of(candidate) : Optional.empty(),
                                              ApplicationExecutors.CREDENTIALS);
     }
@@ -211,6 +253,7 @@ public class ServerUserManager
     {
         synchronized (sessions)
         {
+            requireAccess(verified);
             if (usersById.get(verified.getUuid()) != verified)
             {
                 throw new IllegalStateException("ui.session.changed");
@@ -360,7 +403,7 @@ public class ServerUserManager
      */
     public Optional<ServerUser> authenticate(String username, String password)
     {
-        return findByUsername(username).filter(user -> user.verifyPassword(password));
+        return findByUsername(username).filter(accessAllowed).filter(user -> user.verifyPassword(password));
     }
 
     /**
@@ -465,7 +508,7 @@ public class ServerUserManager
     private Optional<ServerUser> getSessionAccount(UUID playerUuid)
     {
         UUID account = sessions.get(playerUuid);
-        return account == null ? Optional.empty() : Optional.ofNullable(usersById.get(account));
+        return account == null ? Optional.empty() : Optional.ofNullable(usersById.get(account)).filter(accessAllowed);
     }
 
     private void validateRegistration(UUID ownerUuid, String username)

@@ -952,6 +952,7 @@ public abstract class TradePage extends BaseSubGui
         gui.setSlot(42, GuiWidgets.asset(gui, base.assetId(), GuiWidgets.text(gui, "ui.trade.base"), () -> gui.showAsset(base.assetId())));
         gui.setSlot(43, GuiWidgets.asset(gui, quote.assetId(), GuiWidgets.text(gui, "ui.trade.quote"), () -> gui.showAsset(quote.assetId())));
         GuiWidgets.button(gui, 44, Items.OAK_SIGN, market.name(), GuiWidgets.text(gui, "ui.trade.symbol_info", market.type(), priceText(market.tradingRules().priceTick()), quantityText(market.tradingRules().quantityStep()), quantityText(market.tradingRules().minQuantity())), () -> gui.showPage(PageType.SYMBOL_INFO));
+        GuiWidgets.button(gui, 38, Items.REDSTONE_TORCH, "ui.conditional.page", "", () -> gui.showPage(PageType.CONDITIONALS));
         GuiWidgets.button(gui, 39, Items.BOOK, "ui.orders", "", () -> gui.showPage(PageType.ORDERS));
         if (contract())
         {
