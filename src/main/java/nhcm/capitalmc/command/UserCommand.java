@@ -10,6 +10,7 @@ import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import net.minecraft.commands.*;
 import nhcm.advmatch.model.*;
 import nhcm.capitalmc.CapitalMC;
+import nhcm.capitalmc.gui.subgui.AboutPage;
 import nhcm.capitalmc.i18n.I18n;
 import nhcm.capitalmc.account.ServerUser;
 import nhcm.capitalmc.exchange.*;
@@ -90,7 +91,7 @@ public class UserCommand extends BaseCommand
     @Override
     protected void configure(LiteralArgumentBuilder<CommandSourceStack> root)
     {
-        var topics = List.of("account", "balance", "deposit", "withdraw", "transfer", "move", "peg", "market", "markets", "order", "position", "orders", "positions", "trades", "gui", "open", "conditional", "wallet");
+        var topics = List.of("about", "account", "balance", "deposit", "withdraw", "transfer", "move", "peg", "market", "markets", "order", "position", "orders", "positions", "trades", "gui", "open", "conditional", "wallet");
         var help = text("topic").suggests((c, b) -> SharedSuggestionProvider.suggest(topics, b))
                                 .executes(c -> safe(c, () -> CommandHelp.show(c, "trade", arg(c, "topic"), 1)));
         help.then(Commands.argument("page", IntegerArgumentType.integer(1)).executes(c -> safe(c, () -> CommandHelp.show(c, "trade", arg(c, "topic"), IntegerArgumentType.getInteger(c, "page")))));
@@ -100,6 +101,14 @@ public class UserCommand extends BaseCommand
                                             .executes(c -> safe(c, () -> open(c, Arrays.stream(PageType.values())
                                                                                        .filter(page -> page.name().equalsIgnoreCase(arg(c, "page")))
                                                                                        .findFirst().orElseThrow(() -> new IllegalArgumentException("cli.help.unknown")))))));
+        root.then(Commands.literal("about").executes(c -> {
+            CommandHelp.send(c.getSource(), "&bCapitalMC &f%s", AboutPage.version());
+            CommandHelp.send(c.getSource(), "ui.about.description");
+            CommandHelp.send(c.getSource(), "ui.about.author_line");
+            CommandHelp.send(c.getSource(), "ui.about.engine");
+            CommandHelp.send(c.getSource(), "ui.about.links_lore");
+            return 1;
+        }).then(Commands.literal("gui").executes(c -> open(c, PageType.ABOUT))));
         registerAccounts(root);
         registerWallet(root);
         registerMarkets(root);

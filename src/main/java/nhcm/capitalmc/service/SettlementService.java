@@ -84,6 +84,11 @@ public class SettlementService
     public CompletableFuture<Mutation> adjustmentWithRequest(long account, long asset, long change, String type,
                                                              String actor, String reason, String operation)
     {
+        if (assets != null && assets.find(asset).map(McAssetRegistry.Asset::special).orElse(false)
+            && !type.equals("DEPOSIT"))
+        {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("ui.asset.special_restricted"));
+        }
         if (!Set.of("MINT", "BURN", "DEPOSIT", "WITHDRAW", "TRANSFER", "ADMIN_ADJUSTMENT").contains(type)
             || actor == null || actor.isBlank() || reason == null || reason.isBlank())
         {
@@ -155,6 +160,11 @@ public class SettlementService
                                                               boolean conserve, String type, String actor, String reason, String operation)
     {
         var legs = List.copyOf(changes);
+        if (assets != null && legs.stream().anyMatch(leg -> assets.find(leg.assetId()).map(McAssetRegistry.Asset::special).orElse(false))
+            && !type.equals("DEPOSIT") && !type.equals("TRANSFER"))
+        {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("ui.asset.special_restricted"));
+        }
         if (legs.isEmpty() || legs.size() > 256 || actor == null || actor.isBlank() || reason == null || reason.isBlank()
             || !Set.of("DEPOSIT", "TRANSFER", "PEG", "ADMIN_ADJUSTMENT").contains(type)
             || !conserve && !Set.of("DEPOSIT", "ADMIN_ADJUSTMENT").contains(type)

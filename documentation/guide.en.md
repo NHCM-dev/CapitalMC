@@ -47,3 +47,15 @@ Stop the server for a coordinated backup. Preserve custody and recovery evidence
 ## Position protection
 
 Click a position to open its detail page. Market full close requires confirmation only; partial market close asks for quantity. Limit close asks for a price. Add/reduce margin is isolated-only. Take-profit/stop-loss supports last, mark and index triggers, market/limit execution and OCO links. Check the execution status after a trigger; fills depend on funds and liquidity.
+
+## Trading settings
+
+Open **Exchange settings** from administration, or `/cmcadmin market settings <symbol>`. Select a pair and configure order ticks, minimums, fees, exposure limits, self-trade handling, contract execution protection, reference prices and funding schedules. Values show units and effects; changes require an audit reason and confirmation and survive restarts. Exchange-wide halt/resume and checkpoints have their own tab.
+
+Protection accepts a percentage below 100; zero disables the execution band. Turning it back on uses 10%, or enter another percentage. Explicit market/TP/SL price caps, collateral checks and bounded liquidation prices remain active. The one-tick option only widens nonzero bands.
+
+Deposits can consume empty chests or shulker boxes held in the main hand to add container credits. Credits fund container withdrawals and cannot be redeemed as containers. Experience deposits consume points, crediting 1 Exp per point to the spot account (`mc_exp`, unit size 1). The asset is registered at startup and cannot be withdrawn as experience or items.
+
+These deposits share custody records: persist intent, revalidate and remove containers/experience, save Minecraft data, then credit the account or container allowance. Minecraft saves and the exchange ledger are separate stores; interrupted records are quarantined for review after restart and never retried automatically.
+
+Exp is a special asset whose supply grows only through experience deposits. Item binding, issuance, burning, administrative balance adjustments and pegged exchange are disabled; its unit size is fixed at 1. Trading and account transfers remain available. Asset details show net external credits, ledger totals and circulating amounts excluding issuer holdings; unbanked game items and experience are outside these statistics.

@@ -70,8 +70,8 @@ public class PegPage extends BaseSubGui
         {
             return;
         }
-        GuiWidgets.option(gui, 1, Items.EMERALD, "ui.peg.buy", "ui.peg.buy_hint", buy, () -> buy = true);
-        GuiWidgets.option(gui, 2, Items.GOLD_INGOT, "ui.peg.sell", "ui.peg.sell_hint", !buy, () -> buy = false);
+        GuiWidgets.option(gui, 0, Items.EMERALD, "ui.peg.buy", "ui.peg.buy_hint", buy, () -> buy = true);
+        GuiWidgets.option(gui, 1, Items.GOLD_INGOT, "ui.peg.sell", "ui.peg.sell_hint", !buy, () -> buy = false);
         GuiWidgets.separator(gui);
         var assets = GameServices.get().currency.peggedAssets();
         count = assets.size();

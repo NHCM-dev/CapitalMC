@@ -19,7 +19,9 @@ import nhcm.advmatch.object.User;
 import nhcm.capitalmc.CapitalMC;
 import nhcm.capitalmc.account.ServerUser;
 import nhcm.capitalmc.gui.subgui.AdminPage;
+import nhcm.capitalmc.gui.subgui.TradingSettingsPage;
 import nhcm.capitalmc.gui.subgui.HomePage;
+import nhcm.capitalmc.gui.subgui.AboutPage;
 import nhcm.capitalmc.gui.subgui.ListSymbols;
 import nhcm.capitalmc.gui.subgui.account.*;
 import nhcm.capitalmc.gui.subgui.account.AccountPage;
@@ -109,6 +111,12 @@ public class TradingGui extends SimpleGui
         return selectedSymbol;
     }
 
+    public void showTradingSettings(long symbolId)
+    {
+        ((TradingSettingsPage) pages.get(PageType.TRADING_SETTINGS)).select(symbolId);
+        showPage(PageType.TRADING_SETTINGS);
+    }
+
     public AccountPage accountPage()
     {
         return (AccountPage) pages.get(PageType.MY_ACCOUNT);
@@ -143,6 +151,7 @@ public class TradingGui extends SimpleGui
         super(MenuType.GENERIC_9x6, player, false);
         pages = Map.ofEntries(
                 Map.entry(PageType.HOME, new HomePage(this)),
+                Map.entry(PageType.ABOUT, new AboutPage(this)),
                 Map.entry(PageType.LIST_SYMBOLS, new ListSymbols(this)),
                 Map.entry(PageType.MY_ACCOUNT, new AccountPage(this)),
                 Map.entry(PageType.TRADE_SPOT, new TradeSpotPage(this)),
@@ -161,6 +170,7 @@ public class TradingGui extends SimpleGui
                 Map.entry(PageType.POSITION_HISTORY, new HistoryPage(this, PageType.POSITION_HISTORY)),
                 Map.entry(PageType.TRADES, new HistoryPage(this, PageType.TRADES)),
                 Map.entry(PageType.ADMIN, new AdminPage(this)),
+                Map.entry(PageType.TRADING_SETTINGS, new TradingSettingsPage(this)),
                 Map.entry(PageType.SYMBOL_INFO, new SymbolInfoPage(this)),
                 Map.entry(PageType.ORDER_BOOK, new OrderBookPage(this, false)),
                 Map.entry(PageType.BOOK_SETTINGS, new OrderBookPage(this, true)));
@@ -214,6 +224,7 @@ public class TradingGui extends SimpleGui
         }
         if (page != currentPage)
         {
+            resetAccountOperation();
             history.push(currentPage);
             currentPage = page;
         }
@@ -224,8 +235,33 @@ public class TradingGui extends SimpleGui
     {
         if (!history.isEmpty())
         {
+            resetAccountOperation();
             currentPage = history.pop();
             renderPage();
+        }
+    }
+
+    private void resetAccountOperation()
+    {
+        if (currentPage == PageType.DEPOSIT_WITHDRAW)
+        {
+            ((DepositWithdrawPage) pages.get(currentPage)).resetSelection();
+            selectedAsset = 0;
+        }
+        else if (currentPage == PageType.TRANSFER)
+        {
+            ((TransferPage) pages.get(currentPage)).resetSelection();
+            selectedAsset = 0;
+        }
+    }
+
+    @Override
+    public void onManualClose()
+    {
+        super.onManualClose();
+        if (!CapitalMC.guiInputManager.isPaused(getPlayer().getUUID()))
+        {
+            resetAccountOperation();
         }
     }
 
@@ -243,8 +279,8 @@ public class TradingGui extends SimpleGui
     {
         return switch (page)
         {
-            case HOME, ACCESS -> false;
-            case ADMIN -> !getPlayer().permissions().hasPermission(Permissions.COMMANDS_OWNER);
+            case HOME, ACCESS, ABOUT -> false;
+            case ADMIN, TRADING_SETTINGS -> !getPlayer().permissions().hasPermission(Permissions.COMMANDS_OWNER);
             default -> true;
         };
     }
@@ -255,7 +291,7 @@ public class TradingGui extends SimpleGui
         {
             loginNoticeShown = false;
         }
-        else if (!loginNoticeShown && currentPage != PageType.ADMIN)
+        else if (!loginNoticeShown && currentPage != PageType.ADMIN && currentPage != PageType.TRADING_SETTINGS)
         {
             GuiActions.message(this, "ui.access.required");
             loginNoticeShown = true;
@@ -278,6 +314,7 @@ public class TradingGui extends SimpleGui
     {
         if (requiresLogin(currentPage) && getUser().isEmpty())
         {
+            resetAccountOperation();
             currentPage = PageType.HOME;
             history.clear();
         }

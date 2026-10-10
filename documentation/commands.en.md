@@ -13,6 +13,7 @@ Use `/trade help` or `/cmcadmin help`, followed by a topic and optional page num
 | Syntax | Purpose |
 | --- | --- |
 | `/trade help [topic] [page]` | Browse help |
+| `/trade about [gui]` | Show project information or open the About page |
 | `/trade gui [page]` | Open a GUI page |
 | `/trade open <symbol>` | Open a market trading page |
 | `/account create` | Register through private chat |
@@ -137,6 +138,9 @@ Use actual IDs from `/trade markets`, `/positions` and `/conditional`. The OCO e
 | `/cmcadmin market halt <symbol> <reason>` | Halt |
 | `/cmcadmin market icon <symbol> <reason>` | Icon |
 | `/cmcadmin market lot <symbol> <baseAmount> <minimumLots> <lotStep> <reason>` | Lot |
+| `/cmcadmin market settings <symbol>` | Open trading settings GUI |
+| `/cmcadmin market protection show <symbol>` | Show execution protection |
+| `/cmcadmin market protection set <symbol> <percent> <reason>` | Percentage band; 0 disables, less than 100 |
 | `/cmcadmin market mark <symbol> <price> <reason>` | Mark |
 | `/cmcadmin market minimum-notional <symbol> <amount> <reason>` | Min notional |
 | `/cmcadmin market minimum-quantity <symbol> <quantity> <reason>` | Min quantity |

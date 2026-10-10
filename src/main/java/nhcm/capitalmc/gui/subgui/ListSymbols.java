@@ -25,6 +25,7 @@ public class ListSymbols extends BaseSubGui
     public ListSymbols(TradingGui gui)
     {
         super(gui, PageType.LIST_SYMBOLS);
+        setCenterItem(owner -> TradingGui.icon(Items.COMPASS));
     }
 
     private String quoteLore(TradingGui gui, SymbolView symbol)

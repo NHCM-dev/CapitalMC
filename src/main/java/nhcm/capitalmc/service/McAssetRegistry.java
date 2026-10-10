@@ -16,7 +16,7 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Exact item and component registrations. Item assets use scale 0; electronic assets may use decimal scales.
  */
-public final class McAssetRegistry
+public class McAssetRegistry
 {
     public record Asset(long id, String name, String displayName, int scale, boolean electronic, ItemStack prototype,
                         BigDecimal unitSize, long minimumDeposit, long minimumWithdrawal)
@@ -40,6 +40,11 @@ public final class McAssetRegistry
         public ItemStack prototype()
         {
             return prototype.copy();
+        }
+
+        public boolean special()
+        {
+            return name.equals("mc_exp");
         }
 
         public ItemStack stack(int count)
@@ -87,6 +92,10 @@ public final class McAssetRegistry
                 throw new IllegalStateException("ui.operation.busy");
             }
             var previous = find(id).orElseThrow();
+            if (previous.special() && size.compareTo(BigDecimal.ONE) != 0)
+            {
+                throw new IllegalArgumentException("ui.asset.special_restricted");
+            }
             var next = new Asset(id, previous.name(), previous.displayName(), previous.scale(), previous.electronic(), previous.prototype(), size, minimumDeposit, minimumWithdrawal);
             synchronized (this)
             {
@@ -229,6 +238,10 @@ public final class McAssetRegistry
 
     public CompletableFuture<Asset> registerItem(String name, String displayName, ItemStack prototype)
     {
+        if (name.equals("mc_exp"))
+        {
+            throw new IllegalArgumentException("ui.asset.special_restricted");
+        }
         validateDepositStack(prototype);
         return register(name, displayName, 0, false, prototype);
     }
@@ -364,6 +377,10 @@ public final class McAssetRegistry
                 throw new IllegalStateException("ui.operation.busy");
             }
             Asset previous = find(id).orElseThrow();
+            if (previous.special() && (icon != null || electronic != null))
+            {
+                throw new IllegalArgumentException("ui.asset.special_restricted");
+            }
             ItemStack template = icon == null ? previous.prototype() : icon.copyWithCount(1);
             boolean virtual = electronic == null ? previous.electronic() : electronic;
             if (displayName.isBlank() || template.isEmpty() || !virtual && previous.scale() != 0)

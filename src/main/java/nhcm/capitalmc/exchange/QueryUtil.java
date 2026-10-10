@@ -8,6 +8,7 @@ import nhcm.capitalmc.service.ApplicationExecutors;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -79,16 +80,24 @@ class QueryUtil
 
     static <T> CompletableFuture<List<T>> all(Function<ObservationQuery, CompletableFuture<ReadResponse<T>>> read)
     {
-        return page(read, new ObservationQuery().withLimit(256), new ArrayList<>());
+        return page(read, new ObservationQuery().withLimit(256), new ArrayList<>(), 5);
     }
 
     private static <T> CompletableFuture<List<T>> page(
             Function<ObservationQuery, CompletableFuture<ReadResponse<T>>> read,
-            ObservationQuery query, List<T> values)
+            ObservationQuery query, List<T> values, int retries)
     {
         try
         {
             return read.apply(query).thenComposeAsync(response -> {
+                if (response.page().state() == ReadState.CursorExpired && retries > 0)
+                {
+                    // Restart the complete read so rows from different revisions are never combined.
+                    var delay = CompletableFuture.delayedExecutor(25L << (5 - retries), TimeUnit.MILLISECONDS,
+                                                                  ApplicationExecutors.CALLBACKS);
+                    return CompletableFuture.supplyAsync(() -> query.withCursor(new ReadCursor()), delay)
+                                            .thenCompose(fresh -> page(read, fresh, new ArrayList<>(), retries - 1));
+                }
                 if (response.page().state() != ReadState.Success)
                 {
                     throw new BusinessException(response.page());
@@ -103,7 +112,7 @@ class QueryUtil
                 {
                     throw new IllegalStateException("Pagination cursor did not advance");
                 }
-                return page(read, query.withCursor(response.page().next()), values);
+                return page(read, query.withCursor(response.page().next()), values, retries);
             }, ApplicationExecutors.CALLBACKS);
         } catch (RuntimeException error)
         {

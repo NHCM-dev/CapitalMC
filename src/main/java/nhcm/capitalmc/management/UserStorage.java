@@ -13,7 +13,7 @@ import java.util.zip.CRC32C;
 /**
  * Versioned binary account snapshots. Credentials are already hashed; sessions are never stored.
  */
-final class UserStorage
+class UserStorage
 {
     private static final int MAGIC = 0x434d4355, VERSION = 1, LIMIT = 64 * 1024 * 1024;
 

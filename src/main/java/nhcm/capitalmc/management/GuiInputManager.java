@@ -16,7 +16,7 @@ import java.util.function.*;
 /**
  * Server-thread pause controller. Chat is consumed before vanilla broadcast and logging.
  */
-public final class GuiInputManager
+public class GuiInputManager
 {
     public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
     private final Map<UUID, Pending> pending = new HashMap<>();
@@ -306,7 +306,7 @@ public final class GuiInputManager
         return pending.containsKey(player);
     }
 
-    private static final class Pending
+    private static class Pending
     {
         final TradingGui gui;
         Component prompt;

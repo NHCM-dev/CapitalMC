@@ -26,6 +26,13 @@ class AdministrationSettingsTest
         assertThrows(IllegalArgumentException.class, () -> AdministrationService.validateArguments("symbol", new String[]{"future", "market", "base", "quote"}));
         assertThrows(IllegalArgumentException.class, () -> AdministrationService.validateArguments("mint", new String[]{"cash"}));
         assertThrows(IllegalArgumentException.class, () -> AdministrationService.validateArguments("bogus", new String[]{}));
+        assertDoesNotThrow(() -> AdministrationService.validateArguments("protection", new String[]{"1", "0"}));
+        assertDoesNotThrow(() -> AdministrationService.validateArguments("protection", new String[]{"1", "12.5"}));
+        for (String invalid : new String[]{"100", "-1", "0.00001", "not-a-number"})
+        {
+            assertThrows(IllegalArgumentException.class, () -> AdministrationService.validateArguments("protection", new String[]{"1", invalid}));
+        }
+        assertThrows(IllegalArgumentException.class, () -> AdministrationService.validateArguments("protection", new String[]{"1"}));
         assertDoesNotThrow(() -> AdministrationService.validateArguments("halt", new String[]{"1", "yes"}));
     }
 }

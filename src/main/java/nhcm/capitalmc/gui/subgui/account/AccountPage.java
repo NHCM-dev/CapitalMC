@@ -46,12 +46,11 @@ public class AccountPage extends BaseSubGui
         {
             return;
         }
-        GuiWidgets.button(gui, 0, Items.ENDER_EYE, "gui.capitalmc.account.view_edit_info", "", () -> gui.showPage(PageType.ACCESS));
-        GuiWidgets.button(gui, 1, Items.COMPASS, "ui.search", search, () -> GuiActions.input(gui, "ui.search.input", String::strip, value -> {
+        GuiWidgets.button(gui, 0, Items.COMPASS, "ui.search", search, () -> GuiActions.input(gui, "ui.search.input", String::strip, value -> {
             search = value.toLowerCase(Locale.ROOT);
             page = 0;
         }));
-        GuiWidgets.button(gui, 2, Items.SPONGE, "ui.search.clear", "", () -> {
+        GuiWidgets.button(gui, 1, Items.SPONGE, "ui.search.clear", "", () -> {
             search = "";
             page = 0;
         });
@@ -70,7 +69,6 @@ public class AccountPage extends BaseSubGui
         }
         var user = gui.getUser().orElseThrow();
         var type = accountType;
-        gui.setSlot(0, GuiWidgets.accountHead(gui, user, () -> gui.showPage(PageType.ACCESS)));
         var data = balances.get(List.of(user.getUuid(), type, CapitalMC.serverUserManager.getSessionVersion(gui.getPlayer().getUUID())), () -> (type == AccountType.Spot ? BalanceUtil.allSpotBalances(user) : BalanceUtil.allContractBalances(user)).thenCombine(AssetUtil.allAssets(), Balances::new));
         var registered = GameServices.get().assets;
         var filtered = data.values.stream().filter(balance -> {

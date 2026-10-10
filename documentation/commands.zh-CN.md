@@ -13,6 +13,7 @@
 | 语法 | 用途 |
 | --- | --- |
 | `/trade help [topic] [page]` | 分组分页帮助 |
+| `/trade about [gui]` | 查看项目简介，或打开关于页面 |
 | `/trade gui [page]` | 打开指定页面 |
 | `/trade open <symbol>` | 打开交易对页面 |
 | `/account create` | 私有聊天注册 |
@@ -137,6 +138,9 @@ GUI：选择交易对 → 止盈止损 → 创建条件单。本页支持现货�
 | `/cmcadmin market halt <symbol> <reason>` | 暂停交易 |
 | `/cmcadmin market icon <symbol> <reason>` | 修改图标 |
 | `/cmcadmin market lot <symbol> <baseAmount> <minimumLots> <lotStep> <reason>` | 修改手数/张数 |
+| `/cmcadmin market settings <symbol>` | 打开交易设置页 |
+| `/cmcadmin market protection show <symbol>` | 查询成交价格保护 |
+| `/cmcadmin market protection set <symbol> <percent> <reason>` | 百分比保护；0 关闭，必须小于 100 |
 | `/cmcadmin market mark <symbol> <price> <reason>` | 更新标记价 |
 | `/cmcadmin market minimum-notional <symbol> <amount> <reason>` | 修改最小交易金额 |
 | `/cmcadmin market minimum-quantity <symbol> <quantity> <reason>` | 修改最小交易数量 |

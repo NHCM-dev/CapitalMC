@@ -8,7 +8,7 @@ import java.util.function.Supplier;
 /**
  * CPU credentials and blocking metadata IO never run on the server or native callback threads.
  */
-public final class ApplicationExecutors
+public class ApplicationExecutors
 {
     private ApplicationExecutors()
     {

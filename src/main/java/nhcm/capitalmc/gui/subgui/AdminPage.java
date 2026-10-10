@@ -22,7 +22,7 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Owner-only management; each delayed continuation checks permission again.
  */
-public final class AdminPage extends BaseSubGui
+public class AdminPage extends BaseSubGui
 {
     private enum Tab
     {
@@ -82,9 +82,9 @@ public final class AdminPage extends BaseSubGui
     {
         String lore = "&7" + asset.name() + " &8#" + asset.id()
                       + "\n" + GuiWidgets.unitsDescription(gui, asset);
-        if (!asset.electronic())
+        if (asset.special())
         {
-            return lore;
+            lore += "\n" + GuiWidgets.text(gui, "ui.asset.special");
         }
         var data = supply.get("supply", GameServices.get().currency::supply);
         if (data == null || supply.error() != null)
@@ -95,6 +95,11 @@ public final class AdminPage extends BaseSubGui
         var reserve = data.issuer().stream().filter(value -> value.assetId() == asset.id()).findFirst().orElse(new BalanceView());
         String issued = totals == null ? "0" : asset.format(new BigInteger(totals.externalFlow()));
         String actual = totals == null ? "0" : asset.format(new BigInteger(totals.actual()));
+        lore += "\n" + GuiWidgets.text(gui, "ui.asset.circulation", asset.format(data.circulating(asset.id())));
+        if (!asset.electronic() || asset.special())
+        {
+            return lore + "\n" + GuiWidgets.text(gui, "ui.asset.supply", issued, actual);
+        }
         return lore + "\n" + GuiWidgets.text(gui, "ui.admin.supply", issued, actual, asset.format(reserve.active()),
                                              asset.format(reserve.reserved()), GameServices.get().currency.issuerUserId(),
                                              GuiWidgets.text(gui, "ui.boolean." + (totals == null || totals.conserved())));
@@ -265,6 +270,7 @@ public final class AdminPage extends BaseSubGui
             gui.setSlot(22, TradingGui.icon(gui.getPlayer(), Items.BARRIER, "ui.admin.denied", ""));
             return;
         }
+        GuiWidgets.separator(gui);
         var services = GameServices.get();
         var tabs = Tab.values();
         var icons = new Item[]{Items.DIAMOND, Items.BOOK, Items.EMERALD, Items.PLAYER_HEAD, Items.PAPER, Items.COMPASS};
@@ -279,7 +285,7 @@ public final class AdminPage extends BaseSubGui
                 resetInvestigation();
             });
         }
-        GuiWidgets.separator(gui);
+        GuiWidgets.button(gui, 6, Items.COMPARATOR, "ui.settings.title", "ui.settings.entry", () -> gui.showTradingSettings(0));
         if (tab == Tab.ASSETS)
         {
             if (selected != 0)
@@ -287,12 +293,15 @@ public final class AdminPage extends BaseSubGui
                 var a = services.assets.find(selected).orElseThrow();
                 gui.setSlot(22, GuiWidgets.asset(gui, a.id(), assetLore(gui, a), null));
                 button(gui, 18, Items.NAME_TAG, "ui.admin.display", "display", a.name(), "ui.admin.input_display");
-                button(gui, 19, Items.CHEST, "ui.admin.bind", "bind", a.name(), "ui.admin.enter_continue");
-                button(gui, 20, Items.PAPER, "ui.admin.unbind", "unbind", a.name(), "ui.admin.enter_continue");
+                if (!a.special())
+                {
+                    button(gui, 19, Items.CHEST, "ui.admin.bind", "bind", a.name(), "ui.admin.enter_continue");
+                    button(gui, 20, Items.PAPER, "ui.admin.unbind", "unbind", a.name(), "ui.admin.enter_continue");
+                }
                 button(gui, 27, Items.DYE.lime(), "ui.admin.enable", "asset-enable", a.name(), "ui.admin.enter_continue");
                 button(gui, 28, Items.DYE.red(), "ui.admin.disable", "asset-disable", a.name(), "ui.admin.enter_continue");
                 button(gui, 32, Items.REPEATER, "ui.admin.units", "asset-units", a.name(), "ui.admin.input_units");
-                if (a.electronic())
+                if (a.electronic() && !a.special())
                 {
                     button(gui, 30, Items.EMERALD, "ui.admin.mint", "mint", a.name(), "ui.transfer.amount");
                     button(gui, 31, Items.BARRIER, "ui.admin.burn", "burn", a.name(), "ui.transfer.amount");
@@ -325,6 +334,7 @@ public final class AdminPage extends BaseSubGui
                 String id = Long.toString(s.symbolId());
                 GuiWidgets.button(gui, 8, Items.ARROW, "gui.capitalmc.back", "", () -> selected = 0);
                 gui.setSlot(22, services.markets.icon(gui, s, () -> gui.showTrading(s)));
+                GuiWidgets.button(gui, 21, Items.COMPARATOR, "ui.settings.title", "ui.settings.entry", () -> gui.showTradingSettings(s.symbolId()));
                 button(gui, 18, Items.DYE.red(), "ui.admin.halt", "halt", id, "ui.admin.enter_continue");
                 button(gui, 19, Items.DYE.lime(), "ui.admin.resume", "resume", id, "ui.admin.enter_continue");
                 button(gui, 20, Items.WRITABLE_BOOK, "ui.admin.rules", "rules", id, "ui.admin.input_rules");
@@ -400,7 +410,18 @@ public final class AdminPage extends BaseSubGui
                 selectedOperation = null;
                 journal.invalidate();
             });
-            GuiWidgets.button(gui, 7, Items.ARROW, "gui.capitalmc.back", "", () -> selectedOperation = null);
+            GuiWidgets.button(gui, 7, Items.ARROW, "gui.capitalmc.back", "", () -> {
+                if (selectedOperation != null)
+                {
+                    selectedOperation = null;
+                }
+                else
+                {
+                    tab = Tab.ASSETS;
+                    page = 0;
+                    selected = 0;
+                }
+            });
             if (selectedOperation != null)
             {
                 count = 0;

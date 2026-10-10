@@ -19,7 +19,7 @@ import java.util.function.Supplier;
 /**
  * Shared privileged application operations; callers check server permission on execution.
  */
-public final class AdministrationService
+public class AdministrationService
 {
     private final GameServices services;
     private static final Gson JSON = new Gson();
@@ -27,7 +27,7 @@ public final class AdministrationService
     /**
      * Used only by validation that has run before submitting any mutation.
      */
-    private static final class RejectedBeforeMutation extends IllegalArgumentException
+    private static class RejectedBeforeMutation extends IllegalArgumentException
     {
         RejectedBeforeMutation(String message)
         {
@@ -134,6 +134,27 @@ public final class AdministrationService
     {
         String[] captured = args.clone();
         validateArguments(action, captured);
+        int specialAssetIndex = switch (action)
+        {
+            case "bind", "unbind", "mint", "burn" -> 0;
+            case "issue", "reserve-in", "reserve-out" -> 1;
+            case "balance-add", "balance-remove" -> 2;
+            default -> -1;
+        };
+        if (specialAssetIndex >= 0 && asset(captured[specialAssetIndex]).special())
+        {
+            throw new RejectedBeforeMutation("ui.asset.special_restricted");
+        }
+        if ((action.equals("peg") || action.equals("peg-human"))
+            && (asset(captured[0]).special() || asset(captured[1]).special()))
+        {
+            throw new RejectedBeforeMutation("ui.asset.special_restricted");
+        }
+        if (action.equals("asset-units") && asset(captured[0]).special()
+            && new BigDecimal(captured[1]).compareTo(BigDecimal.ONE) != 0)
+        {
+            throw new RejectedBeforeMutation("ui.asset.special_restricted");
+        }
         ItemStack snapshot = held.copy();
         return perform(operator, reason, action, JSON.toJsonTree(captured), () -> {
             if (!authorized.getAsBoolean())
@@ -151,7 +172,7 @@ public final class AdministrationService
             case "bind", "unbind", "asset-enable", "asset-disable", "halt", "resume", "expire", "icon", "refund",
                  "review-items", "review-pegs", "review-transfers", "review-commands" -> 1;
             case "display", "rules", "schedule", "reference", "funding", "funding-percent", "deliver", "mark", "mint",
-                 "burn", "register", "price-tick", "quantity-step", "min-quantity", "min-notional" -> 2;
+                 "burn", "register", "price-tick", "quantity-step", "min-quantity", "min-notional", "protection" -> 2;
             case "electronic", "issue", "peg", "fees" -> 3;
             case "peg-config", "peg-human" -> 10;
             case "asset-units", "lot" -> 4;
@@ -179,6 +200,21 @@ public final class AdministrationService
         if (Arrays.stream(args).anyMatch(String::isBlank))
         {
             throw new IllegalArgumentException("Empty action argument");
+        }
+        if (action.equals("protection"))
+        {
+            try
+            {
+                long rate = percent(args[1]);
+                if (rate < 0 || rate >= 1_000_000)
+                {
+                    throw new IllegalArgumentException("ui.settings.protection_range");
+                }
+            }
+            catch (ArithmeticException | NumberFormatException error)
+            {
+                throw new IllegalArgumentException("ui.settings.protection_range");
+            }
         }
     }
 
@@ -309,6 +345,16 @@ public final class AdministrationService
                                      }
                                      return receipt;
                                  });
+            }
+            case "protection" ->
+            {
+                long rate = percent(a[1]);
+                if (rate < 0 || rate >= 1_000_000)
+                {
+                    throw new RejectedBeforeMutation("ui.settings.protection_range");
+                }
+                var symbol = CapitalMC.exchange.symbols().get(Long.parseLong(a[0]));
+                return CapitalMC.exchange.contracts().configureProtection(symbol, rate);
             }
             case "rules" ->
             {

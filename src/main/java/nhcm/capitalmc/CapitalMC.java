@@ -20,7 +20,7 @@ import org.slf4j.LoggerFactory;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
-public final class CapitalMC implements DedicatedServerModInitializer
+public class CapitalMC implements DedicatedServerModInitializer
 {
     public static GameServices services;
     public static Exchange exchange = null;

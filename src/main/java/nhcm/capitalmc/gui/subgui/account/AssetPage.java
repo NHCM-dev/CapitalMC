@@ -6,11 +6,14 @@ import nhcm.capitalmc.CapitalMC;
 import nhcm.capitalmc.exchange.*;
 import nhcm.capitalmc.gui.*;
 import nhcm.capitalmc.service.GameServices;
+import nhcm.capitalmc.service.CurrencyService;
+import java.math.BigInteger;
 
 import java.util.*;
 
 public class AssetPage extends BaseSubGui
 {
+    private final PollingValue<CurrencyService.Supply> supply = new PollingValue<>(null);
     private final PollingValue<Optional<BalanceView>> balance = new PollingValue<>(Optional.empty());
 
     public AssetPage(TradingGui gui)
@@ -37,6 +40,22 @@ public class AssetPage extends BaseSubGui
         {
             var info = registered.get();
             lore += "\n" + GuiWidgets.unitsDescription(gui, info);
+            if (info.special())
+            {
+                lore += "\n" + GuiWidgets.text(gui, "ui.asset.special");
+            }
+            var data = supply.get("supply", GameServices.get().currency::supply);
+            if (data == null || supply.error() != null)
+            {
+                lore += "\n" + GuiWidgets.text(gui, supply.error() == null ? "ui.loading" : "ui.query_failed");
+            }
+            else
+            {
+                var total = data.audit().assets().stream().filter(value -> value.assetId() == asset).findFirst().orElse(null);
+                BigInteger actual = total == null ? BigInteger.ZERO : new BigInteger(total.actual());
+                lore += "\n" + GuiWidgets.text(gui, "ui.asset.circulation", info.format(data.circulating(asset)))
+                        + "\n" + GuiWidgets.text(gui, "ui.asset.supply", total == null ? "0" : info.format(new BigInteger(total.externalFlow())), info.format(actual));
+            }
         }
         if (gui.getUser().isPresent())
         {
@@ -52,6 +71,9 @@ public class AssetPage extends BaseSubGui
         gui.setSlot(13, GuiWidgets.asset(gui, asset, lore, null));
         GuiWidgets.button(gui, 20, Items.NAME_TAG, "gui.capitalmc.account.deposit_withdraw", "", () -> gui.showPage(PageType.DEPOSIT_WITHDRAW));
         GuiWidgets.button(gui, 22, Items.RAIL, "ui.transfer", "", () -> gui.showPage(PageType.TRANSFER));
-        GuiWidgets.button(gui, 24, Items.EMERALD, "ui.peg", "", () -> gui.showPage(PageType.PEG));
+        if (registered.isEmpty() || !registered.get().special())
+        {
+            GuiWidgets.button(gui, 24, Items.EMERALD, "ui.peg", "", () -> gui.showPage(PageType.PEG));
+        }
     }
 }

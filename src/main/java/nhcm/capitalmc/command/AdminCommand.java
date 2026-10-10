@@ -17,6 +17,7 @@ import nhcm.capitalmc.exchange.*;
 import nhcm.capitalmc.gui.*;
 import nhcm.capitalmc.service.*;
 
+import java.math.BigDecimal;
 import java.util.*;
 import java.math.BigInteger;
 import java.util.function.Function;
@@ -80,6 +81,14 @@ public class AdminCommand extends BaseCommand
         mutation(root, "market minimum-notional", "min-notional", "symbol amount");
         mutation(root, "market fees", "fees", "symbol makerPercent takerPercent");
         mutation(root, "market lot", "lot", "symbol baseAmount minimumLots lotStep");
+        mutation(root, "market protection set", "protection", "symbol percent");
+        query(root, "market protection show", "symbol", c -> protection(c));
+        attach(root, "market settings", List.of("symbol"), c -> {
+            var player = c.getSource().getPlayerOrException();
+            CapitalMC.guiManager.getTradingGui(player).showTradingSettings(LongArgumentType.getLong(c, "symbol"));
+            CapitalMC.guiManager.openTradingGui(player);
+            return 1;
+        });
         mutation(root, "market mark", "mark", "symbol price");
         mutation(root, "market funding", "funding-percent", "symbol percent");
         mutation(root, "market expire", "expire", "symbol");
@@ -332,7 +341,8 @@ public class AdminCommand extends BaseCommand
         }
         return GameServices.get().currency.supply().thenCompose(data -> GameServices.get().onServer(() -> list + data.audit().assets().stream().map(a -> {
             var asset = GameServices.get().assets.find(a.assetId()).orElseThrow();
-            return "\n" + localized(c, "cli.supply", asset.displayName(), asset.format(new BigInteger(a.externalFlow())), asset.format(new BigInteger(a.actual())));
+            return "\n" + localized(c, "cli.supply", asset.displayName(), asset.format(new BigInteger(a.externalFlow())), asset.format(new BigInteger(a.actual())))
+                   + "\n" + localized(c, "ui.asset.circulation", asset.format(data.circulating(asset.id())));
         }).collect(Collectors.joining())));
     }
 
@@ -350,6 +360,14 @@ public class AdminCommand extends BaseCommand
         {
             return "";
         }
+    }
+
+    private CompletableFuture<String> protection(CommandContext<CommandSourceStack> c)
+    {
+        var symbol = CapitalMC.exchange.symbols().get(LongArgumentType.getLong(c, "symbol"));
+        return CapitalMC.exchange.contracts().market(symbol).thenCompose(value -> GameServices.get().onServer(() ->
+                localized(c, "ui.settings.protection_status", symbol.id(), value.spec().priceBandRate() == 0
+                        ? localized(c, "ui.form.off") : new BigDecimal(value.spec().priceBandRate()).movePointLeft(4).stripTrailingZeros().toPlainString() + "%")));
     }
 
     private CompletableFuture<String> settings(CommandContext<CommandSourceStack> c, String kind)

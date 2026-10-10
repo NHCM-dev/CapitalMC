@@ -22,3 +22,10 @@ Build with JDK 25 using `./gradlew.bat build`. Minecraft 26.3, Fabric and the bu
 - Prefer straightforward control flow, descriptive local variables and small named methods. Avoid dense nested lambdas, clever syntax, and long asynchronous chains when intermediate steps can explain the operation more clearly. Use `var` where the type is obvious; otherwise write the type.
 - Use imports instead of fully qualified class names in declarations and method bodies. Keep qualification only when needed to disambiguate conflicting type names or for a concrete language/API requirement.
 - Match nearby user-authored code when choosing naming, method structure and formatting. Apply this style to new or touched code; do not reformat unrelated files wholesale.
+
+## UI wording
+
+- Player and administrator UI text must describe actual functions, current state and necessary actions. Do not repeat prompts, layout instructions, implementation rationale or claims about removed decorations. Empty, loading and failed states must be distinct; only actionable controls should instruct users to click. Apply this to both en_us and zh_cn.
+- Keep the gray glass separator below top navigation on pages that list variable assets, pairs, users or records. Fixed settings layouts may use that space for controls.
+- All Administration tabs, including status and record details, keep their top gray glass separator.
+- The Exchange settings global management tab also keeps its top gray glass separator; place its controls below the separator.

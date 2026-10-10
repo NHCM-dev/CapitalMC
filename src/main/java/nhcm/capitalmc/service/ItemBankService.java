@@ -5,6 +5,8 @@ import com.mojang.serialization.JsonOps;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.minecraft.core.*;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.*;
@@ -30,7 +32,7 @@ import java.util.function.Supplier;
 /**
  * Main-thread physical selection; durable metadata precedes every irreversible custody step.
  */
-public final class ItemBankService
+public class ItemBankService
 {
     public enum Output
     {
@@ -53,7 +55,7 @@ public final class ItemBankService
         }
     }
 
-    public static final class DepositSelection
+    public static class DepositSelection
     {
         private final UUID session, player, user;
         private final ServerLevel level;
@@ -65,6 +67,10 @@ public final class ItemBankService
         private final Map<Long, Long> amounts;
         private final JsonObject recovery;
         private Map<Integer, InventoryChoice> inventory = Map.of();
+        private boolean containerCreditsOnly;
+        private int experiencePoints;
+        private int experienceLevel, totalExperience;
+        private float experienceProgress;
 
         private DepositSelection(Session session, ServerPlayer player, int slot, int count, ItemStack stack,
                                  List<BlockPos> positions, List<BlockState> blocks, List<List<ItemStack>> contents,
@@ -110,7 +116,7 @@ public final class ItemBankService
     {
     }
 
-    private static final class Session
+    private static class Session
     {
         final UUID id = UUID.randomUUID();
         final ServerUser user;
@@ -269,6 +275,70 @@ public final class ItemBankService
         session.level = player.level();
         sessions.put(player.getUUID(), session);
         return session.selected.copy();
+    }
+
+    public static int experienceAvailable(ServerPlayer player)
+    {
+        long level = Math.max(0, player.experienceLevel);
+        if (level > 21863)
+        {
+            return Integer.MAX_VALUE;
+        }
+        long base = level <= 16 ? level * level + 6 * level
+                : level <= 31 ? (5 * level * level - 81 * level + 720) / 2
+                : (9 * level * level - 325 * level + 4440) / 2;
+        long progress = Math.round(player.experienceProgress * player.getXpNeededForNextLevel());
+        return Math.toIntExact(Math.min(Integer.MAX_VALUE, Math.max(0, base + progress)));
+    }
+
+    public DepositSelection prepareExperience(ServerPlayer player, ServerUser user, int points)
+    {
+        var asset = services.assets.find("mc_exp").orElseThrow();
+        if (!asset.electronic() || !services.assets.enabled(asset.id()) || points < asset.minimumDeposit()
+            || points > experienceAvailable(player))
+        {
+            throw new IllegalArgumentException("ui.deposit.experience_amount");
+        }
+        beginSelection(player, user, false, Duration.ofSeconds(90));
+        var session = sessions.get(player.getUUID());
+        var recovery = new JsonObject();
+        recovery.addProperty("experiencePoints", points);
+        recovery.addProperty("experienceLevelBefore", player.experienceLevel);
+        recovery.addProperty("experienceProgressBefore", player.experienceProgress);
+        recovery.addProperty("totalExperienceBefore", player.totalExperience);
+        var selection = new DepositSelection(session, player, -1, 0, ItemStack.EMPTY, List.of(), List.of(), List.of(),
+                                             Map.of(asset.id(), (long) points), 0, 0, recovery);
+        selection.experiencePoints = points;
+        selection.experienceLevel = player.experienceLevel;
+        selection.experienceProgress = player.experienceProgress;
+        selection.totalExperience = player.totalExperience;
+        session.selection = selection;
+        return selection;
+    }
+
+    public DepositSelection prepareContainerCredits(ServerPlayer player, ServerUser user, ContainerKind kind, int amount)
+    {
+        int slot = player.getInventory().getSelectedSlot();
+        var stack = player.getInventory().getItem(slot);
+        boolean matches = kind == ContainerKind.CHEST ? stack.is(Items.CHEST) || stack.is(Items.TRAPPED_CHEST)
+                : Block.byItem(stack.getItem()) instanceof ShulkerBoxBlock;
+        if (!matches || amount <= 0 || amount > stack.getCount()
+            || stack.getOrDefault(DataComponents.CONTAINER, ItemContainerContents.EMPTY).nonEmptyItemCopyStream().findAny().isPresent())
+        {
+            throw new IllegalArgumentException("ui.deposit.credits_empty");
+        }
+        beginSelection(player, user, false, Duration.ofSeconds(90));
+        var session = sessions.get(player.getUUID());
+        var recovery = new JsonObject();
+        recovery.addProperty("containerCreditsOnly", true);
+        recovery.addProperty("slot", slot);
+        recovery.addProperty("selectedCount", amount);
+        recovery.add("stack", encode(stack));
+        var selection = new DepositSelection(session, player, slot, amount, stack, List.of(), List.of(), List.of(), Map.of(),
+                                             kind == ContainerKind.CHEST ? amount : 0, kind == ContainerKind.SHULKER ? amount : 0, recovery);
+        selection.containerCreditsOnly = true;
+        session.selection = selection;
+        return selection;
     }
 
     public CompletableFuture<DepositSelection> beginBatchSelection(ServerPlayer player, ServerUser user, boolean container, Duration timeout)
@@ -554,6 +624,22 @@ public final class ItemBankService
                     throw new IllegalStateException("ui.deposit.changed");
                 }
         }
+        if (selection.containerCreditsOnly)
+        {
+            return;
+        }
+        if (selection.experiencePoints > 0)
+        {
+            var asset = services.assets.find("mc_exp").orElseThrow();
+            if (player.experienceLevel != selection.experienceLevel || player.experienceProgress != selection.experienceProgress
+                || player.totalExperience != selection.totalExperience || !services.assets.enabled(asset.id()) || !asset.electronic()
+                || selection.experiencePoints < asset.minimumDeposit() || selection.experiencePoints > experienceAvailable(player)
+                || !selection.amounts.equals(Map.of(asset.id(), (long) selection.experiencePoints)))
+            {
+                throw new IllegalStateException("ui.deposit.changed");
+            }
+            return;
+        }
         // An unchanged inventory is insufficient when its registered asset binding has changed.
         var currentAmounts = new LinkedHashMap<Long, Long>();
         for (var entry : selection.inventory.values())
@@ -615,6 +701,10 @@ public final class ItemBankService
                                                                                                            {
                                                                                                                throw new IllegalStateException("Container removal failed");
                                                                                                            }
+                                                                                                       }
+                                                                                                       if (selection.experiencePoints > 0)
+                                                                                                       {
+                                                                                                           player.giveExperiencePoints(-selection.experiencePoints);
                                                                                                        }
                                                                                                        player.inventoryMenu.broadcastFullState();
                                                                                                        saveWorld();
@@ -1099,7 +1189,7 @@ public final class ItemBankService
         return error instanceof BusinessException;
     }
 
-    private static final class BeforeCustody extends IllegalStateException
+    private static class BeforeCustody extends IllegalStateException
     {
         BeforeCustody(RuntimeException changed)
         {

@@ -22,6 +22,7 @@ public class HomePage extends BaseSubGui
             GuiWidgets.button(gui, 22, Items.PLAYER_HEAD, "ui.access.login_entry", "ui.access.required", () -> gui.showPage(PageType.ACCESS));
             return;
         }
+        GuiWidgets.button(gui, 0, Items.BOOK, "ui.about", "ui.about.description", () -> gui.showPage(PageType.ABOUT));
         if (gui.getPlayer().permissions().hasPermission(Permissions.COMMANDS_OWNER))
         {
             GuiWidgets.button(gui, 8, Items.COMPASS, "ui.admin", "", () -> gui.showPage(PageType.ADMIN));

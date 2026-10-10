@@ -203,6 +203,40 @@ class TradeCapacityTest
     }
 
     @Test
+    void disabledProtectionKeepsBoundedReservationsAndPricesMarketFractionsFromTheBook()
+    {
+        long id;
+        try (var e = exchange())
+        {
+            var base = e.assets().create("Base", "base", 0).join();
+            var quote = e.assets().create("Quote", "quote", 0).join();
+            var symbol = e.symbols().create("B/Q", SymbolType.Perpetual, base, quote).join();
+            id = symbol.id();
+            var spec = new ContractSpec().withFirstFundingTimestamp(28800001).withMakerFeeRate(0).withTakerFeeRate(0);
+            e.books().addContract(symbol, spec, 100, 1, OrderBookImplementation.Radix).join();
+            e.contracts().configureProtection(symbol, 0).join();
+            var market = e.contracts().market(symbol).join();
+            assertTrue(TradeCapacity.priceBand(market).contains(150));
+            assertEquals(Long.MAX_VALUE, TradeCapacity.marketPriceLimit(market, OrderSide.Bid, 1));
+            assertEquals(7, TradeCapacity.marketPriceLimit(market, OrderSide.Ask, 7));
+            assertEquals(110, TradeCapacity.reservation(market, 0, 1, 1, false).total().longValueExact());
+            var asks = List.of(new DepthView(id, OrderSide.Ask, 150, 100, 1));
+            for (int divisor : new int[]{4, 2, 1})
+            {
+                assertEquals(1000 / divisor / 150, TradeCapacity.quantity(symbol.snapshot().join(), market, OrderSide.Bid,
+                                                                       OrderType.Market, Long.MAX_VALUE, 1, 1000, divisor, asks));
+            }
+            assertEquals(0, TradeCapacity.quantity(symbol.snapshot().join(), market, OrderSide.Bid,
+                                                  OrderType.Market, 140, 1, 1000, 1, asks));
+            assertThrows(CompletionException.class, () -> e.contracts().configureProtection(symbol, 1_000_000).join());
+        }
+        try (var e = exchange())
+        {
+            assertEquals(0, e.contracts().market(e.symbols().get(id)).join().spec().priceBandRate());
+        }
+    }
+
+    @Test
     void crossBudgetExcludesExistingMarginAndNeverSpendsUnrealizedProfit()
     {
         assertEquals(700, TradeCapacity.budget(1000, new CrossMarginView(1, 2, 1000, 0, 200, 0, 0, -100, 0, false, null)));

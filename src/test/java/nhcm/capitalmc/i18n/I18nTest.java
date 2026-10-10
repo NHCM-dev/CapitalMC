@@ -63,4 +63,18 @@ class I18nTest
             assertTrue(I18n.text(language, "ui.form.percent").getString().contains("0.05%"));
         }
     }
+    @Test
+    void tradingSettingsExplainValuesAndLiteralPercentagesInBothLanguages()
+    {
+        for (String language : new String[]{"en_us", "zh_cn"})
+        {
+            String toggle = I18n.text(language, "ui.settings.protection_lore", "25%").getString();
+            assertTrue(toggle.contains("25%") && toggle.contains("10%"));
+            assertFalse(toggle.contains("ui.settings.") || toggle.contains("%%"));
+            String details = I18n.text(language, "ui.settings.field", "0.05%", "500", "percent", "maker fee").getString();
+            assertTrue(details.contains("0.05%") && details.contains("500") && details.contains("maker fee"));
+            assertFalse(I18n.text(language, "ui.form.field.makerRate").getString().contains("ui.form."));
+        }
+    }
+
 }

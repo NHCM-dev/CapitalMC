@@ -10,7 +10,7 @@ import nhcm.capitalmc.service.GameServices;
 /**
  * Presentation of native results; state codes are scoped to their command family.
  */
-public final class ExchangeMessages
+public class ExchangeMessages
 {
     private ExchangeMessages()
     {

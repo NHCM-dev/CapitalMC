@@ -3,6 +3,8 @@ package nhcm.capitalmc.service;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import nhcm.advmatch.BusinessException;
 import nhcm.advmatch.command.persistence.Flush;
 import nhcm.capitalmc.CapitalMC;
@@ -11,7 +13,7 @@ import nhcm.capitalmc.gui.TradingGui;
 import java.util.concurrent.*;
 import java.util.function.Supplier;
 
-public final class GameServices
+public class GameServices
 {
     public final MinecraftServer server;
     public final ServiceState state;
@@ -39,7 +41,9 @@ public final class GameServices
         markets = new MarketService(this);
         administration = new AdministrationService(this);
         items.registerEvents();
-        ready = CapitalMC.accountsReady.thenCompose(unused -> items.initialize()).thenCompose(unused -> assets.initialize()).thenCompose(unused -> markets.initialize()).thenCompose(unused -> currency.initialize())
+        ready = CapitalMC.accountsReady.thenCompose(unused -> items.initialize()).thenCompose(unused -> assets.initialize())
+                                       .thenCompose(unused -> onServer(() -> assets.registerElectronic("mc_exp", "Exp", 0, new ItemStack(Items.EXPERIENCE_BOTTLE))).thenCompose(registration -> registration))
+                                       .thenCompose(unused -> markets.initialize()).thenCompose(unused -> currency.initialize())
                                        .thenCompose(unused -> CapitalMC.exchange.contracts().setAutomaticLiquidationBudget(32).thenAccept(receipt -> {
                                            if (!receipt.result().accepted())
                                            {

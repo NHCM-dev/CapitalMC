@@ -15,7 +15,7 @@ import java.util.zip.CRC32;
 /**
  * CapitalMC metadata only. Durable patch journal avoids rewriting growing audit records for every phase.
  */
-public final class ServiceState
+public class ServiceState
 {
     private static final Gson JSON = new Gson();
     private final Path file, journal;

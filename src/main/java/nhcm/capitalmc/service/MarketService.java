@@ -21,7 +21,7 @@ import java.util.concurrent.*;
 /**
  * Market setup includes its order book; merely creating a Symbol does not enable matching.
  */
-public final class MarketService
+public class MarketService
 {
     private final GameServices services;
     private final Map<Long, ItemStack> icons = new HashMap<>();

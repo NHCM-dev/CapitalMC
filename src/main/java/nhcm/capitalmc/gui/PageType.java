@@ -3,6 +3,7 @@ package nhcm.capitalmc.gui;
 public enum PageType
 {
     HOME("gui.capitalmc.home"),
+    ABOUT("ui.about"),
     LIST_SYMBOLS("gui.capitalmc.symbols"),
     MY_ACCOUNT("gui.capitalmc.account"),
     DEPOSIT_WITHDRAW("gui.capitalmc.deposit_withdraw"),
@@ -21,6 +22,7 @@ public enum PageType
     POSITION_HISTORY("ui.position_history"),
     TRADES("ui.trades"),
     ADMIN("ui.admin"),
+    TRADING_SETTINGS("ui.settings.title"),
     SYMBOL_INFO("ui.symbol_info"),
     ORDER_BOOK("ui.book.professional"),
     BOOK_SETTINGS("ui.book.settings");

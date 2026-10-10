@@ -478,7 +478,7 @@ public class AdminInput
         });
     }
 
-    private static String patchUnit(TradingGui gui, SymbolView symbol, String field)
+    public static String patchUnit(TradingGui gui, SymbolView symbol, String field)
     {
         if (field.endsWith("Timestamp"))
         {
@@ -508,7 +508,7 @@ public class AdminInput
         return GuiWidgets.text(gui, "ui.form.hint." + field);
     }
 
-    private static JsonPrimitive patchValue(SymbolView symbol, String field, JsonPrimitive previous, String text)
+    public static JsonPrimitive patchValue(SymbolView symbol, String field, JsonPrimitive previous, String text)
     {
         if (previous.isBoolean())
         {

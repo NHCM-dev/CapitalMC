@@ -8,7 +8,7 @@ import java.util.List;
 /**
  * Display-only sizing from immutable native views. The exchange validates the actual order.
  */
-public final class TradeCapacity
+public class TradeCapacity
 {
     private static final BigInteger RATE = BigInteger.valueOf(1_000_000), MAX = BigInteger.valueOf(Long.MAX_VALUE);
 
@@ -50,7 +50,7 @@ public final class TradeCapacity
 
     private static BigInteger reservationPrice(MarketView contract, long price, long tick)
     {
-        return n(price).max(priceBand(contract, tick).upper());
+        return n(price).max(reservationBand(contract, tick).upper());
     }
 
     public record PriceBand(BigInteger lower, BigInteger upper)
@@ -68,9 +68,19 @@ public final class TradeCapacity
 
     public static PriceBand priceBand(MarketView contract, long priceTick)
     {
-        BigInteger lower = ceil(n(contract.markPrice()).multiply(RATE.subtract(n(contract.spec().priceBandRate()))), 1_000_000);
-        BigInteger upper = n(contract.markPrice()).multiply(RATE.add(n(contract.spec().priceBandRate()))).divide(RATE);
-        if (contract.spec().priceBandRate() > 0)
+        if (contract.spec().priceBandRate() == 0)
+        {
+            return new PriceBand(BigInteger.ONE, MAX);
+        }
+        return reservationBand(contract, priceTick);
+    }
+
+    private static PriceBand reservationBand(MarketView contract, long priceTick)
+    {
+        long rate = contract.spec().priceBandRate() == 0 ? 100_000 : contract.spec().priceBandRate();
+        BigInteger lower = ceil(n(contract.markPrice()).multiply(RATE.subtract(n(rate))), 1_000_000);
+        BigInteger upper = n(contract.markPrice()).multiply(RATE.add(n(rate))).divide(RATE);
+        if (rate > 0)
         {
             BigInteger tick = n(priceTick);
             lower = lower.min(n(contract.markPrice()).subtract(tick).max(BigInteger.ONE));
@@ -177,7 +187,28 @@ public final class TradeCapacity
             if (contract != null)
             {
                 var spec = contract.spec();
-                cost = reservation(contract, type == OrderType.Market ? 0 : price, q.longValueExact(), leverage, false, rules.tickAwarePriceBand() ? rules.priceTick() : 0).total();
+                long referencePrice = price;
+                if (type == OrderType.Market)
+                {
+                    referencePrice = 0;
+                    long remaining = q.longValueExact();
+                    for (var level : opposite)
+                    {
+                        if (!executable(contract, side, price, level.price(), rules.tickAwarePriceBand() ? rules.priceTick() : 0))
+                        {
+                            continue;
+                        }
+                        referencePrice = Math.max(referencePrice, level.price());
+                        remaining -= Math.min(remaining, level.quantity());
+                        if (remaining == 0)
+                        {
+                            break;
+                        }
+                    }
+                }
+                var estimate = reservation(contract, referencePrice, q.longValueExact(), leverage, false, rules.tickAwarePriceBand() ? rules.priceTick() : 0);
+                cost = estimate.total();
+                notional = estimate.price().multiply(q).multiply(m);
                 if (notional.compareTo(n(spec.maxPositionNotional())) > 0)
                 {
                     cost = MAX.add(BigInteger.ONE);

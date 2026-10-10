@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * The issuer account owns issued electronic currency and redemption reserves.
  */
-public final class CurrencyService
+public class CurrencyService
 {
     private final GameServices services;
     private volatile long issuerUser;
@@ -43,6 +43,15 @@ public final class CurrencyService
 
     public record Supply(AuditReport audit, List<BalanceView> issuer)
     {
+        public BigInteger circulating(long assetId)
+        {
+            BigInteger total = audit.assets().stream().filter(value -> value.assetId() == assetId)
+                    .map(value -> new BigInteger(value.actual())).findFirst().orElse(BigInteger.ZERO);
+            BigInteger held = issuer.stream().filter(value -> value.assetId() == assetId)
+                    .map(value -> BigInteger.valueOf(value.active()).add(BigInteger.valueOf(value.reserved())))
+                    .reduce(BigInteger.ZERO, BigInteger::add);
+            return total.subtract(held);
+        }
     }
 
     private CompletableFuture<Supply> supplyQuery;
@@ -81,6 +90,7 @@ public final class CurrencyService
 
     public CompletableFuture<CommandReceipt> mint(long electronicAsset, long amount, String operator, String reason, UUID operation)
     {
+        requireOrdinaryAsset(electronicAsset);
         if (amount <= 0 || !asset(electronicAsset).electronic())
         {
             throw new IllegalArgumentException("Mint only electronic assets");
@@ -95,6 +105,7 @@ public final class CurrencyService
 
     public CompletableFuture<CommandReceipt> burn(long electronicAsset, long amount, String operator, String reason, UUID operation)
     {
+        requireOrdinaryAsset(electronicAsset);
         if (amount <= 0 || !asset(electronicAsset).electronic())
         {
             throw new IllegalArgumentException("Burn only electronic assets");
@@ -104,6 +115,7 @@ public final class CurrencyService
 
     public CompletableFuture<CommandReceipt> issue(ServerUser recipient, long electronicAsset, long amount)
     {
+        requireOrdinaryAsset(electronicAsset);
         if (!asset(electronicAsset).electronic())
         {
             throw new IllegalArgumentException("Not an electronic asset");
@@ -179,6 +191,7 @@ public final class CurrencyService
 
     public CompletableFuture<CommandReceipt> reserve(ServerUser user, long asset, long amount, boolean deposit, String operator, String reason)
     {
+        requireOrdinaryAsset(asset);
         if (amount <= 0 || !services.assets.enabled(asset))
         {
             return CompletableFuture.failedFuture(new IllegalArgumentException("ui.units.invalid"));
@@ -206,6 +219,8 @@ public final class CurrencyService
     public CompletableFuture<Void> configurePeg(long base, long quote, long baseUnits, long quoteUnits, int feePpm,
                                                 long minimum, long maximum, boolean buy, boolean sell, boolean enabled)
     {
+        requireOrdinaryAsset(base);
+        requireOrdinaryAsset(quote);
         asset(base);
         asset(quote);
         if (base == quote || baseUnits <= 0 || quoteUnits <= 0 || feePpm < 0 || feePpm >= 1_000_000 || minimum <= 0 || maximum < minimum)
@@ -421,6 +436,14 @@ public final class CurrencyService
             op.addProperty("review", note);
             op.addProperty("reviewTimestamp", System.currentTimeMillis());
         }).whenComplete((unused, error) -> exchanging.remove(user));
+    }
+
+    private void requireOrdinaryAsset(long id)
+    {
+        if (asset(id).special())
+        {
+            throw new IllegalArgumentException("ui.asset.special_restricted");
+        }
     }
 
     private McAssetRegistry.Asset asset(long id)

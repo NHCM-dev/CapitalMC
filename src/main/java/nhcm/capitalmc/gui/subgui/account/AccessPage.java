@@ -100,7 +100,7 @@ public class AccessPage extends BaseSubGui
         {
             return;
         }
-        GuiWidgets.button(gui, 20, Items.PLAYER_HEAD, "ui.access.login", "", () -> login(null));
+        GuiWidgets.button(gui, 20, Items.PLAYER_HEAD, "ui.access.login", "ui.access.login_hint", () -> login(null));
         GuiWidgets.button(gui, 22, Items.WRITABLE_BOOK, "ui.access.register", "ui.access.register_limit", this::register);
         if (gui.getUser().isPresent())
         {
@@ -111,12 +111,28 @@ public class AccessPage extends BaseSubGui
                                   GuiActions.message(gui, "ui.success.logout");
                               });
         }
+        for (int slot = 27; slot < 36; slot++)
+        {
+            gui.setSlot(slot, TradingGui.GRAY_GLASS_PANE);
+        }
+        gui.setSlot(27, TradingGui.icon(gui.getPlayer(), Items.STAINED_GLASS_PANE.gray(),
+                                      "ui.access.available_accounts", "ui.access.available_accounts_hint"));
         var owned = CapitalMC.serverUserManager.getOwnedAccounts(gui.getPlayer().getUUID());
         for (int i = 0; i < owned.size(); i++)
         {
             var user = owned.get(i);
-            gui.setSlot(28 + i, GuiWidgets.accountHead(gui, user, () -> login(user.getUsername())));
+            gui.setSlot(36 + i, GuiWidgets.accountHead(gui, user, () -> login(user.getUsername())));
         }
-        gui.getUser().ifPresent(user -> gui.setSlot(4, GuiWidgets.accountHead(gui, user, null)));
+        if (gui.getUser().isPresent())
+        {
+            var user = gui.getUser().orElseThrow();
+            gui.setSlot(4, TradingGui.icon(gui.getPlayer(), GuiWidgets.accountHead(gui, user, null),
+                                         GuiWidgets.text(gui, "ui.access.current_account", user.getDisplayName()),
+                                         GuiWidgets.text(gui, "ui.access.account_username", user.getUsername())));
+        }
+        else
+        {
+            gui.setSlot(4, TradingGui.icon(gui.getPlayer(), Items.PLAYER_HEAD, "ui.access.not_logged_in", "ui.access.login_hint"));
+        }
     }
 }

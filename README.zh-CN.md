@@ -2,7 +2,7 @@
 
 [English](README.md) · 简体中文
 
-基于 **AdvMatch 1.1.0** 的 Minecraft 服务端交易所。通过物品栏界面交易实物与电子资产，玩家无需安装客户端模组。
+基于 **AdvMatch 1.2.0** 的 Minecraft 服务端交易所。通过物品栏界面交易实物与电子资产，玩家无需安装客户端模组。
 
 ## 功能
 
@@ -21,7 +21,7 @@
 .\gradlew.bat build
 ```
 
-将 `build/libs/CapitalMC-0.1.0-SNAPSHOT.jar` 和 Fabric API 放入服务器的 `mods` 目录。SGui 与 AdvMatch 已内置。当前 AdvMatch 包支持 **Windows amd64**；其他平台需要构建对应原生 SDK。
+将 `build/libs/CapitalMC-0.2.0-SNAPSHOT.jar` 和 Fabric API 放入服务器的 `mods` 目录。SGui 与 AdvMatch 已内置。当前 AdvMatch 包支持 **Windows amd64**；其他平台需要构建对应原生 SDK。
 
 开发时使用 `.\gradlew.bat runServer`，首次启动前阅读并接受 Minecraft EULA。完整构建会执行单元测试与 Minecraft GameTest。
 

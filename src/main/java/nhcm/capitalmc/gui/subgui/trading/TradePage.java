@@ -73,6 +73,8 @@ public abstract class TradePage extends BaseSubGui
 
     private final PollingValue<Funds> funds = new PollingValue<>(null);
     private final PollingValue<SymbolUtil.Snapshot> statistics = new PollingValue<>(null);
+    private final PollingValue<Long> quoteBalance = new PollingValue<>(null);
+    private Long displayedQuoteBalance;
     private Funds displayedFunds;
     private SymbolUtil.Snapshot displayedStatistics;
 
@@ -90,8 +92,7 @@ public abstract class TradePage extends BaseSubGui
     protected TradePage(TradingGui gui, PageType page)
     {
         super(gui, page);
-        setCenterItem(owner -> market == null ? TradingGui.icon(Items.GOLD_INGOT) :
-                GameServices.get().markets.icon(owner, market, null));
+        setCenterItem(owner -> TradingGui.icon(Items.COMPASS));
     }
 
     public Symbol getSymbol()
@@ -226,14 +227,31 @@ public abstract class TradePage extends BaseSubGui
         return GuiWidgets.text(getGui(), "ui.trade.amounts", base.displayName(), baseAmount, quote.displayName(), cash);
     }
 
+    private boolean unprotectedMarket()
+    {
+        return type == OrderType.Market && contract() && price == 0 && displayedStatistics != null
+               && displayedStatistics.contract() != null && displayedStatistics.contract().spec().priceBandRate() == 0;
+    }
+
+    private String ticketPriceText()
+    {
+        return unprotectedMarket() ? GuiWidgets.text(getGui(), "ui.settings.market_unbounded") : priceText(ticketPrice());
+    }
+
     private String priceLore()
     {
         if (type == OrderType.Market)
         {
             String mode = contract() ? GuiWidgets.text(getGui(), price == 0 ? "ui.trade.market_auto_limit" : "ui.trade.market_manual_limit",
-                                                       ticketPrice() > 0 ? priceText(ticketPrice()) : GuiWidgets.text(getGui(), "ui.loading"))
+                                                       ticketPrice() > 0 ? ticketPriceText() : GuiWidgets.text(getGui(), "ui.loading"))
                     : GuiWidgets.text(getGui(), "ui.trade.spot_market_price");
-            return mode + marketBandLore() + "\n" + amountsLore(ticketPrice(), quantity);
+            long reference = ticketPrice();
+            if (unprotectedMarket())
+            {
+                var opposite = side == OrderSide.Bid ? displayedStatistics.depth().asks() : displayedStatistics.depth().bids();
+                reference = opposite.isEmpty() ? displayedStatistics.contract().markPrice() : opposite.getFirst().price();
+            }
+            return mode + marketBandLore() + "\n" + amountsLore(reference, quantity);
         }
         return GuiWidgets.text(getGui(), "ui.trade.price_units", base.displayName(), quote.displayName(), price > 0 ? priceText(price) : GuiWidgets.text(getGui(), "ui.trade.estimate_unavailable"))
                + "\n" + amountsLore(price, quantity);
@@ -297,6 +315,10 @@ public abstract class TradePage extends BaseSubGui
         {
             return "";
         }
+        if (displayedStatistics.contract().spec().priceBandRate() == 0)
+        {
+            return "\n" + GuiWidgets.text(getGui(), "ui.settings.protection_disabled_player");
+        }
         var band = TradeCapacity.priceBand(displayedStatistics.contract(), market.tradingRules().tickAwarePriceBand() ? market.tradingRules().priceTick() : 0);
         return "\n" + GuiWidgets.text(getGui(), "ui.trade.execution_band", priceText(displayedStatistics.contract().markPrice()),
                                       baseUnits().price(band.lower(), BigInteger.ONE, quoteUnits()), baseUnits().price(band.upper(), BigInteger.ONE, quoteUnits()));
@@ -323,7 +345,7 @@ public abstract class TradePage extends BaseSubGui
             }
             if (inBand.stream().noneMatch(level -> side == OrderSide.Bid ? level.price() <= ticketPrice() : level.price() >= ticketPrice()))
             {
-                return GuiWidgets.text(getGui(), "ui.trade.market_outside_limit", priceText(ticketPrice())) + marketBandLore();
+                return GuiWidgets.text(getGui(), "ui.trade.market_outside_limit", ticketPriceText()) + marketBandLore();
             }
         }
         return GuiWidgets.text(getGui(), "ui.trade.market_no_capacity");
@@ -405,12 +427,13 @@ public abstract class TradePage extends BaseSubGui
         {
             return 0;
         }
-        var key = new CapacityKey(displayedFunds.available(), market, displayedStatistics, side, type, ticketPrice(), leverage);
+        long estimatePrice = capacityPrice();
+        var key = new CapacityKey(displayedFunds.available(), market, displayedStatistics, side, type, estimatePrice, leverage);
         if (!key.equals(capacityKey))
         {
             var opposite = side == OrderSide.Bid ? displayedStatistics.depth().asks() : displayedStatistics.depth().bids();
             for (int i = 0; i < 3; i++)
-                capacities[i] = TradeCapacity.quantity(market, displayedStatistics.contract(), side, type, ticketPrice(), leverage, displayedFunds.available(), new int[]{4, 2, 1}[i], opposite);
+                capacities[i] = TradeCapacity.quantity(market, displayedStatistics.contract(), side, type, estimatePrice, leverage, displayedFunds.available(), new int[]{4, 2, 1}[i], opposite);
             capacityKey = key;
         }
         return capacities[divisor == 4 ? 0 : divisor == 2 ? 1 : 2];
@@ -436,11 +459,6 @@ public abstract class TradePage extends BaseSubGui
             GuiActions.message(getGui(), "ui.loading");
             return;
         }
-        if ((type == OrderType.Limit || contract()) && ticketPrice() <= 0)
-        {
-            GuiActions.message(getGui(), "ui.trade.price_required");
-            return;
-        }
         long available = availableQuantity(divisor);
         if (available <= 0)
         {
@@ -457,14 +475,40 @@ public abstract class TradePage extends BaseSubGui
         getGui().refresh();
     }
 
+    private long capacityPrice()
+    {
+        if (ticketPrice() > 0 || displayedStatistics == null)
+        {
+            return ticketPrice();
+        }
+        var opposite = side == OrderSide.Bid ? displayedStatistics.depth().asks() : displayedStatistics.depth().bids();
+        if (!opposite.isEmpty())
+        {
+            return opposite.getFirst().price();
+        }
+        return displayedStatistics.contract() == null ? 0 : displayedStatistics.contract().markPrice();
+    }
+
+    private String quoteBalanceLore(TradingGui gui)
+    {
+        String available = quoteBalance.error() != null ? GuiWidgets.text(gui, "ui.query_failed")
+                : displayedQuoteBalance == null ? GuiWidgets.text(gui, "ui.loading") : quoteUnits().format(displayedQuoteBalance);
+        return GuiWidgets.text(gui, "ui.trade.quote_available", quote.displayName(), available);
+    }
+
     private void pollFunds(TradingGui gui)
     {
         var user = gui.getUser().orElse(null);
         if (user == null)
         {
             displayedFunds = null;
+            displayedQuoteBalance = null;
             return;
         }
+        var quoteAccount = contract() ? AccountType.Contract : AccountType.Spot;
+        displayedQuoteBalance = quoteBalance.get(new FundsContext(user.getUuid(), CapitalMC.serverUserManager.getSessionVersion(gui.getPlayer().getUUID()), selection, quote.assetId(), quoteAccount),
+                () -> GameServices.get().settlements.account(user, quoteAccount).thenCompose(id -> BalanceUtil.balance(id, quote.assetId()))
+                                  .thenApply(value -> value.map(BalanceView::active).orElse(0L)));
         long asset = contract() || side == OrderSide.Bid ? quote.assetId() : base.assetId();
         var account = contract() ? AccountType.Contract : AccountType.Spot;
         displayedFunds = funds.get(new FundsContext(user.getUuid(), CapitalMC.serverUserManager.getSessionVersion(gui.getPlayer().getUUID()), selection, asset, account), () ->
@@ -615,7 +659,7 @@ public abstract class TradePage extends BaseSubGui
     private String summary()
     {
         return GuiWidgets.text(getGui(), "ui.trade.summary", market.name(), contract() ? GuiWidgets.text(getGui(), contractAction.label) : side, type, tif,
-                               type == OrderType.Market ? contract() ? GuiWidgets.text(getGui(), "ui.trade.market_cap", priceText(ticketPrice())) : GuiWidgets.text(getGui(), "gui.capitalmc.trade.spot.mkt") : priceText(price), quantityText(quantity))
+                               type == OrderType.Market ? contract() ? GuiWidgets.text(getGui(), "ui.trade.market_cap", ticketPriceText()) : GuiWidgets.text(getGui(), "gui.capitalmc.trade.spot.mkt") : priceText(price), quantityText(quantity))
                + (contract() ? "\n" + GuiWidgets.text(getGui(), "ui.trade.margin", contractAction.closing && closePosition() != null ? closePosition().leverage() : leverage,
                                                       contractAction.closing && closePosition() != null ? closePosition().marginMode() : margin) : "")
                + (contract() && contractAction.closing ? "\n" + GuiWidgets.text(getGui(), "ui.trade.position_id", closingPosition) : "")
@@ -915,8 +959,8 @@ public abstract class TradePage extends BaseSubGui
         });
 
         GuiWidgets.button(gui, 18, Items.BOW, "ui.trade.edit_price", priceLore(), this::inputPrice);
-        GuiWidgets.button(gui, 19, Items.IRON_INGOT, GuiWidgets.text(gui, "ui.trade.price", type == OrderType.Market ? contract() ? GuiWidgets.text(gui, "ui.trade.market_cap", priceText(ticketPrice())) : GuiWidgets.text(getGui(), "gui.capitalmc.trade.spot.mkt") : priceText(price)), priceLore(), this::inputPrice);
-        GuiWidgets.button(gui, 27, Items.BOW, "ui.trade.edit_quantity", amountsLore(price, quantity), this::inputQuantity);
+        GuiWidgets.button(gui, 19, Items.IRON_INGOT, GuiWidgets.text(gui, "ui.trade.price", type == OrderType.Market ? contract() ? GuiWidgets.text(gui, "ui.trade.market_cap", ticketPriceText()) : GuiWidgets.text(getGui(), "gui.capitalmc.trade.spot.mkt") : priceText(price)), priceLore(), this::inputPrice);
+        GuiWidgets.button(gui, 27, Items.BOW, "ui.trade.edit_quantity", quoteBalanceLore(gui) + "\n" + amountsLore(price, quantity), this::inputQuantity);
         for (int i = 0; i < 3; i++)
         {
             int divisor = new int[]{4, 2, 1}[i];
@@ -925,8 +969,13 @@ public abstract class TradePage extends BaseSubGui
                     gui.getUser().isEmpty() ? GuiWidgets.text(gui, "gui.capitalmc.account.login_required") :
                             funds.error() != null || statistics.error() != null ? GuiWidgets.text(gui, "ui.query_failed") :
                                     displayedFunds == null || displayedStatistics == null ? GuiWidgets.text(gui, "ui.loading") :
-                                            (type == OrderType.Limit || contract()) && ticketPrice() <= 0 ? GuiWidgets.text(gui, "ui.trade.price_required") : GuiWidgets.text(gui, "ui.trade.available_quantity", quantityText(available));
-            status += "\n" + amountsLore(price, available) + "\n" + GuiWidgets.text(gui, "ui.trade.quantity", quantityText(quantity))
+                                            GuiWidgets.text(gui, "ui.trade.available_quantity", quantityText(available));
+            status = quoteBalanceLore(gui) + "\n" + status;
+            if (type == OrderType.Limit && price <= 0)
+            {
+                status += "\n" + GuiWidgets.text(gui, "ui.trade.quantity_estimate");
+            }
+            status += "\n" + amountsLore(capacityPrice(), available) + "\n" + GuiWidgets.text(gui, "ui.trade.quantity", quantityText(quantity))
                       + "\n" + amountsLore(price, quantity) + reservationLore() + "\n" + GuiWidgets.text(gui, "ui.trade.capacity_hint")
                       + "\n" + GuiWidgets.text(gui, "ui.lot.minimum", quantityText(market.tradingRules().minQuantity()), quantityText(market.tradingRules().quantityStep()));
             if (type == OrderType.Market && available == 0)

@@ -14,7 +14,7 @@ import java.util.concurrent.CompletableFuture;
 /**
  * One native cursor page per request, including scan-budget-limited empty pages.
  */
-public final class HistoryPage extends BaseSubGui
+public class HistoryPage extends BaseSubGui
 {
     private record Context(UUID user, long epoch, long symbol, ReadCursor cursor)
     {

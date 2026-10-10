@@ -23,6 +23,15 @@ public class TransferPage extends BaseSubGui
         setCenterItem(Items.RAIL);
     }
 
+    public void resetSelection()
+    {
+        choosing = true;
+        search = "";
+        page = 0;
+        count = 0;
+        balances.invalidate();
+    }
+
     private void transfer(boolean player)
     {
         var gui = getGui();
@@ -30,7 +39,26 @@ public class TransferPage extends BaseSubGui
         long assetId = gui.getSelectedAsset();
         var asset = GameServices.get().assets.find(assetId).orElseThrow(() -> new IllegalArgumentException("ui.withdraw.select_asset"));
         var source = gui.accountPage().getAccountType();
-        GuiActions.input(gui, GuiWidgets.amountInput(gui, assetId, 1), text -> asset.parse(text), v -> {
+        if (player && source != AccountType.Spot)
+        {
+            throw new IllegalArgumentException("ui.transfer.player_spot");
+        }
+        var availableBalances = balances.get(List.of(user.getUuid(), source, CapitalMC.serverUserManager.getSessionVersion(gui.getPlayer().getUUID())),
+                                            () -> source == AccountType.Spot ? BalanceUtil.allSpotBalances(user) : BalanceUtil.allContractBalances(user));
+        if (availableBalances == null || balances.error() != null)
+        {
+            GuiActions.message(gui, balances.error() == null ? "ui.loading" : "ui.query_failed");
+            return;
+        }
+        long available = availableBalances.stream().filter(value -> value.assetId() == assetId).mapToLong(BalanceView::active).findFirst().orElse(0);
+        GuiActions.input(gui, GuiWidgets.text(gui, "ui.input.transfer_amount", asset.displayName(), asset.format(available)), text -> {
+            long raw = asset.parse(text);
+            if (raw <= 0 || raw > available)
+            {
+                throw new IllegalArgumentException("ui.transfer.amount_range");
+            }
+            return raw;
+        }, v -> {
         }).thenAccept(amount -> {
             if (amount.isEmpty())
             {
@@ -71,9 +99,17 @@ public class TransferPage extends BaseSubGui
             return;
         }
         GuiWidgets.option(gui, 7, Items.GOLDEN_BOOTS, "gui.capitalmc.account.spot", "", gui.accountPage().getAccountType() == AccountType.Spot,
-                          () -> gui.accountPage().setAccountType(AccountType.Spot));
+                          () -> {
+                              gui.accountPage().setAccountType(AccountType.Spot);
+                              choosing = true;
+                              gui.selectAsset(0);
+                          });
         GuiWidgets.option(gui, 8, Items.CHAINMAIL_BOOTS, "gui.capitalmc.account.contract", "", gui.accountPage().getAccountType() == AccountType.Contract,
-                          () -> gui.accountPage().setAccountType(AccountType.Contract));
+                          () -> {
+                              gui.accountPage().setAccountType(AccountType.Contract);
+                              choosing = true;
+                              gui.selectAsset(0);
+                          });
         if (choosing || gui.getSelectedAsset() <= 0)
         {
             renderAssets(gui);
@@ -107,8 +143,15 @@ public class TransferPage extends BaseSubGui
         var source = gui.accountPage().getAccountType();
         var amounts = balances.get(List.of(user.getUuid(), source, CapitalMC.serverUserManager.getSessionVersion(gui.getPlayer().getUUID())),
                                    () -> source == AccountType.Spot ? BalanceUtil.allSpotBalances(user) : BalanceUtil.allContractBalances(user));
+        if (amounts == null || balances.error() != null)
+        {
+            count = 0;
+            gui.setSlot(22, TradingGui.icon(gui.getPlayer(), Items.CLOCK, balances.error() == null ? "ui.loading" : "ui.query_failed", ""));
+            return;
+        }
         var registry = GameServices.get().assets;
         var assets = registry.all().stream().filter(asset -> registry.enabled(asset.id()))
+                             .filter(asset -> amounts.stream().anyMatch(value -> value.assetId() == asset.id() && value.active() > 0))
                              .filter(asset -> (asset.name() + " " + asset.displayName() + " " + asset.id()).toLowerCase(Locale.ROOT).contains(search)).toList();
         count = assets.size();
         page = GuiWidgets.clamp(page, count);
@@ -134,6 +177,13 @@ public class TransferPage extends BaseSubGui
     @Override
     public void renderOverlay(TradingGui gui)
     {
+        if (!choosing && gui.getSelectedAsset() > 0)
+        {
+            GuiWidgets.button(gui, 45, Items.ARROW, "gui.capitalmc.back", "", () -> {
+                choosing = true;
+                gui.selectAsset(0);
+            });
+        }
         if (count > 0 && (choosing || gui.getSelectedAsset() <= 0))
         {
             GuiWidgets.paging(gui, page, count, value -> page = value);

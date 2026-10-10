@@ -7,6 +7,8 @@ import io.netty.channel.embedded.EmbeddedChannel;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.SystemReport;
+import oshi.software.os.OSProcess;
 import nhcm.advmatch.model.BalanceView;
 import nhcm.advmatch.model.ObservationQuery;
 import nhcm.advmatch.model.ReadResponse;
@@ -38,6 +40,7 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.*;
 import net.minecraft.world.item.component.ItemLore;
+import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.EnchantmentInstance;
 import net.minecraft.world.item.enchantment.Enchantments;
@@ -50,6 +53,7 @@ import nhcm.advmatch.model.AccountType;
 import nhcm.advmatch.model.AuditReport;
 import nhcm.advmatch.model.ContractOrderOptions;
 import nhcm.advmatch.model.ContractSpec;
+import nhcm.advmatch.model.MarketView;
 import nhcm.advmatch.model.ConditionalOrderView;
 import nhcm.advmatch.model.ConditionalOrderStatus;
 import nhcm.advmatch.model.ConditionalOrderKind;
@@ -76,6 +80,8 @@ import nhcm.capitalmc.gui.*;
 import nhcm.capitalmc.service.*;
 
 import java.time.Duration;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
@@ -85,6 +91,151 @@ import java.util.function.Supplier;
  */
 public final class CapitalGameTests
 {
+    private static CompletableFuture<Void> rejectSpecialAssetChange(Supplier<? extends CompletableFuture<?>> action)
+    {
+        try
+        {
+            return action.get().handle((value, error) -> {
+                check(error != null, "Special asset change was accepted");
+                Throwable cause = error;
+                while (cause.getCause() != null)
+                {
+                    cause = cause.getCause();
+                }
+                check("ui.asset.special_restricted".equals(cause.getMessage()), "Wrong special asset rejection");
+                return null;
+            });
+        }
+        catch (IllegalArgumentException error)
+        {
+            check("ui.asset.special_restricted".equals(error.getMessage()), "Wrong special asset rejection");
+            return CompletableFuture.completedFuture(null);
+        }
+    }
+
+    @GameTest(maxTicks = 1200)
+    public void containerCreditsDepositConsumesOnlyConfirmedEmptyContainers(GameTestHelper helper)
+    {
+        var test = new Steps(helper);
+        var selected = new ItemBankService.DepositSelection[1];
+        test.add(() -> {
+            test.player = survivalPlayer(helper);
+            String name = "credits_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+            return CapitalMC.serverUserManager.registerAsync(name, name, "", test.player.getUUID());
+        });
+        test.add(() -> {
+            test.user = (ServerUser) test.last;
+            CapitalMC.serverUserManager.activateVerified(test.player.getUUID(), test.user);
+            test.player.getInventory().setSelectedSlot(0);
+            test.player.getInventory().setItem(0, new ItemStack(Items.CHEST, 3));
+            selected[0] = GameServices.get().items.prepareContainerCredits(test.player, test.user, ItemBankService.ContainerKind.CHEST, 2);
+            check(test.player.getMainHandItem().getCount() == 3, "Credit preview consumed containers");
+            return GameServices.get().items.deposit(test.player, test.user, selected[0]);
+        });
+        test.add(() -> {
+            var items = GameServices.get().items;
+            check(test.player.getMainHandItem().getCount() == 1, "Wrong container consumption");
+            check(items.containerCredit(test.user, ItemBankService.ContainerKind.CHEST) == 2, "Missing chest credits");
+            try
+            {
+                items.deposit(test.player, test.user, selected[0]);
+                throw new AssertionError("Duplicate credit deposit accepted");
+            }
+            catch (IllegalStateException expected)
+            {
+                check(items.containerCredit(test.user, ItemBankService.ContainerKind.CHEST) == 2, "Duplicate credits issued");
+            }
+            var filled = new ItemStack(Items.SHULKER_BOX);
+            filled.set(DataComponents.CONTAINER, ItemContainerContents.fromItems(List.of(new ItemStack(Items.DIAMOND))));
+            test.player.getInventory().setItem(0, filled);
+            try
+            {
+                items.prepareContainerCredits(test.player, test.user, ItemBankService.ContainerKind.SHULKER, 1);
+                throw new AssertionError("Filled shulker accepted for credits");
+            }
+            catch (IllegalArgumentException expected)
+            {
+                check(test.player.getMainHandItem().getCount() == 1, "Rejected shulker consumed");
+            }
+            test.player.getInventory().setItem(0, new ItemStack(Items.SHULKER_BOX));
+            var selection = items.prepareContainerCredits(test.player, test.user, ItemBankService.ContainerKind.SHULKER, 1);
+            return items.deposit(test.player, test.user, selection);
+        });
+        test.add(() -> {
+            check(test.player.getMainHandItem().isEmpty(), "Shulker deposit did not consume container");
+            check(GameServices.get().items.containerCredit(test.user, ItemBankService.ContainerKind.SHULKER) == 1, "Missing shulker credit");
+            return CompletableFuture.completedFuture(null);
+        });
+        test.run();
+    }
+
+    @GameTest(maxTicks = 1200)
+    public void experienceDepositUsesPointsAndRejectsChangedPreview(GameTestHelper helper)
+    {
+        var test = new Steps(helper);
+        test.add(() -> {
+            test.player = survivalPlayer(helper);
+            String name = "exp_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+            return CapitalMC.serverUserManager.registerAsync(name, name, "", test.player.getUUID());
+        });
+        test.add(() -> {
+            test.user = (ServerUser) test.last;
+            CapitalMC.serverUserManager.activateVerified(test.player.getUUID(), test.user);
+            var asset = GameServices.get().assets.find("mc_exp").orElseThrow();
+            test.diamond = asset.id();
+            check(asset.displayName().equals("Exp") && asset.scale() == 0 && asset.unitSize().compareTo(BigDecimal.ONE) == 0,
+                  "Default experience asset has wrong units");
+            check(asset.electronic(), "Experience can be withdrawn as an item");
+            test.player.giveExperiencePoints(1000);
+            check(ItemBankService.experienceAvailable(test.player) == 1000, "Experience levels were confused with points");
+            var selection = GameServices.get().items.prepareExperience(test.player, test.user, 100);
+            check(ItemBankService.experienceAvailable(test.player) == 1000, "Experience preview consumed points");
+            test.player.giveExperiencePoints(1);
+            try
+            {
+                GameServices.get().items.deposit(test.player, test.user, selection);
+                throw new AssertionError("Changed experience preview accepted");
+            }
+            catch (IllegalStateException expected)
+            {
+                check(ItemBankService.experienceAvailable(test.player) == 1001, "Rejected preview changed experience");
+            }
+            var confirmed = GameServices.get().items.prepareExperience(test.player, test.user, 100);
+            return GameServices.get().items.deposit(test.player, test.user, confirmed);
+        });
+        test.add(() -> {
+            check(ItemBankService.experienceAvailable(test.player) == 901, "Wrong experience deduction");
+            return BalanceUtil.spotAvailable(test.user, test.diamond);
+        });
+        test.add(() -> {
+            check((Long) test.last == 100, "Experience deposit credited wrong balance");
+            var services = GameServices.get();
+            return CompletableFuture.allOf(
+                    rejectSpecialAssetChange(() -> services.currency.mint(test.diamond, 1)),
+                    rejectSpecialAssetChange(() -> services.currency.burn(test.diamond, 1, "test", "test")),
+                    rejectSpecialAssetChange(() -> services.currency.issue(test.user, test.diamond, 1)),
+                    rejectSpecialAssetChange(() -> services.settlements.account(test.user, AccountType.Spot)
+                            .thenCompose(account -> services.settlements.adjustment(account, test.diamond, 1, "TRANSFER", "test", "test", null))),
+                    rejectSpecialAssetChange(() -> services.currency.reserve(test.user, test.diamond, 1, true, "test", "test")),
+                    rejectSpecialAssetChange(() -> services.currency.configurePeg(test.diamond, test.diamond, 1, 1, 0, 1, 100, true, true, true)),
+                    rejectSpecialAssetChange(() -> services.assets.edit(test.diamond, "Exp", new ItemStack(Items.DIAMOND), false, true)),
+                    rejectSpecialAssetChange(() -> services.assets.configureUnits(test.diamond, BigDecimal.TEN, 1, 1)),
+                    rejectSpecialAssetChange(() -> services.administration.action("balance-add", new String[]{test.user.getUsername(), "spot", "mc_exp", "1"}, ItemStack.EMPTY, "test", "test")))
+                    .thenCompose(unused -> BalanceUtil.spotAvailable(test.user, test.diamond));
+        });
+        test.add(() -> {
+            check((Long) test.last == 100, "Rejected special asset operations changed the balance");
+            return GameServices.get().currency.supply();
+        });
+        test.add(() -> {
+            var supply = (CurrencyService.Supply) test.last;
+            var totals = supply.audit().assets().stream().filter(value -> value.assetId() == test.diamond).findFirst().orElseThrow();
+            check(new BigInteger(totals.actual()).compareTo(BigInteger.valueOf(100)) >= 0, "Experience is missing from asset supply");
+            return CompletableFuture.completedFuture(null);
+        });
+        test.run();
+    }
+
     @GameTest(maxTicks = 2400)
     public void batchDropsAccumulateAndChangedPreviewReleasesInterception(GameTestHelper helper)
     {
@@ -626,6 +777,90 @@ public final class CapitalGameTests
         test.run();
     }
 
+    @GameTest
+    public void missingOperatingSystemProcessUsesJvmMetrics(GameTestHelper helper) throws Exception
+    {
+        var report = new SystemReport();
+        var method = SystemReport.class.getDeclaredMethod("putProcessDetails", OSProcess.class);
+        method.setAccessible(true);
+        method.invoke(report, new Object[]{null});
+        String details = report.toLineSeparatedString();
+        check(details.contains("Process Committed Virtual Size (MiB)"), "Missing JVM process memory fallback");
+        check(details.contains("Unavailable (OSHI process information)"), "Missing explicit unavailable resident memory");
+        check(!details.contains("ERR"), "Null process produced a diagnostic exception");
+        helper.succeed();
+    }
+
+    @GameTest(maxTicks = 1600)
+    public void ownerTradingSettingsUseChatAndPersistProtectionWithoutTradeLogin(GameTestHelper helper)
+    {
+        var test = new Steps(helper);
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        var market = new SymbolView[1];
+        test.add(() -> {
+            test.player = survivalPlayer(helper);
+            test.player.level().getServer().getPlayerList().op(new NameAndId(test.player.getGameProfile()), Optional.of(LevelBasedPermissionSet.OWNER), Optional.of(false));
+            return GameServices.get().assets.registerElectronic("settings_base_" + suffix, "Settings base", 0, new ItemStack(Items.DIAMOND));
+        });
+        test.add(() -> {
+            test.diamond = ((McAssetRegistry.Asset) test.last).id();
+            return GameServices.get().assets.registerElectronic("settings_quote_" + suffix, "Settings quote", 0, new ItemStack(Items.EMERALD));
+        });
+        test.add(() -> {
+            test.gold = ((McAssetRegistry.Asset) test.last).id();
+            return GameServices.get().markets.createPerpetual("Settings " + suffix, test.diamond, test.gold, 100, new ContractSpec()).thenCompose(Symbol::snapshot);
+        });
+        test.add(() -> {
+            market[0] = (SymbolView) test.last;
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            gui.showTradingSettings(market[0].symbolId());
+            gui.open();
+            check(gui.getCurrentPage() == PageType.TRADING_SETTINGS, "Owner settings requires a trading login");
+            click(gui, 1);
+            var ready = new CompletableFuture<Void>();
+            test.poll = () -> {
+                gui.refresh();
+                var field = gui.getGuiElement(10);
+                if (field != null && field.getItemStackForDisplay(gui).is(Items.COMPARATOR))
+                {
+                    check(gui.getGuiElement(9).getItemStackForDisplay(gui).is(Items.SHIELD), "Settings still uses the gray separator");
+                    var lore = field.getItemStackForDisplay(gui).getOrDefault(DataComponents.LORE, ItemLore.EMPTY).lines();
+                    check(lore.stream().anyMatch(line -> line.getString().contains("10%")), "Band value missing from setting description");
+                    ready.complete(null);
+                }
+            };
+            return ready;
+        });
+        test.add(() -> awaitReply(test, "Administration operation completed: Configure price protection", () -> {
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            click(gui, 10);
+            check(!chat(test.player, "0"), "Protection input broadcast");
+            check(!chat(test.player, "Test disabled protection"), "Audit reason broadcast");
+            check(!chat(test.player, "yes"), "Confirmation broadcast");
+        }));
+        test.add(() -> CapitalMC.exchange.contracts().market(CapitalMC.exchange.symbols().get(market[0].symbolId())));
+        test.add(() -> {
+            check(((MarketView) test.last).spec().priceBandRate() == 0, "GUI did not update native protection");
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            click(gui, 4);
+            gui.refresh();
+            var ready = new CompletableFuture<Void>();
+            test.poll = () -> {
+                gui.refresh();
+                var control = gui.getGuiElement(18);
+                if (control != null && control.getItemStackForDisplay(gui).is(Items.DYE.red()))
+                {
+                    ready.complete(null);
+                }
+            };
+            check(GameServices.get().state.snapshot().getAsJsonObject("adminOperations").entrySet().stream()
+                      .map(entry -> entry.getValue().getAsJsonObject()).anyMatch(record -> record.get("action").getAsString().equals("protection")
+                      && record.get("phase").getAsString().equals("COMPLETE")), "Protection change missing durable administration audit");
+            return ready;
+        });
+        test.run();
+    }
+
     @GameTest(maxTicks = 1200)
     public void adminSupplySearchAndTransferAssetPickerUseNativeViews(GameTestHelper helper)
     {
@@ -647,6 +882,24 @@ public final class CapitalGameTests
             asset[0] = (McAssetRegistry.Asset) test.last;
             return GameServices.get().currency.mint(asset[0].id(), 12345, "gametest", "Supply display");
         });
+        test.add(() -> GameServices.get().settlements.account(test.user, AccountType.Spot)
+                .thenCompose(account -> GameServices.get().settlements.update(account, asset[0].id(), 100)));
+        test.add(() -> {
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            gui.showPage(PageType.TRANSFER);
+            gui.open();
+            var ready = new CompletableFuture<Void>();
+            test.poll = () -> {
+                gui.refresh();
+                if (gui.getGuiElement(18) != null)
+                {
+                    test.poll = () -> {
+                    };
+                    ready.complete(null);
+                }
+            };
+            return ready;
+        });
         test.add(() -> {
             var gui = CapitalMC.guiManager.getTradingGui(test.player);
             gui.showPage(PageType.TRANSFER);
@@ -662,6 +915,12 @@ public final class CapitalGameTests
             gui.refresh();
             check(gui.getGuiElement(18).getItemStackForDisplay(gui).getHoverName().getString().equals(name), "Cannot change transfer asset");
             gui.showPage(PageType.ADMIN);
+            check(gui.getSelectedAsset() == 0, "Leaving transfer retained the selected asset");
+            return GameServices.get().settlements.account(test.user, AccountType.Spot)
+                    .thenCompose(account -> GameServices.get().settlements.update(account, asset[0].id(), -100));
+        });
+        test.add(() -> {
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
             click(gui, 50);
             check(!chat(test.player, name), "Admin search broadcast");
             gui.refresh();
@@ -675,11 +934,87 @@ public final class CapitalGameTests
                 if (lore.stream().anyMatch(line -> line.getString().equals("Net issued supply: 123.45"))
                     && lore.stream().anyMatch(line -> line.getString().equals("Issuer available: 123.45")))
                 {
-                    test.poll = null;
+                    test.poll = () -> {
+                    };
                     displayed.complete(null);
                 }
             };
             return displayed;
+        });
+        test.run();
+    }
+
+    @GameTest(maxTicks = 1200)
+    public void withdrawalPickerAndNavigationClearSelections(GameTestHelper helper)
+    {
+        var test = new Steps(helper);
+        test.add(CapitalGameTests::testAssets);
+        test.add(() -> {
+            test.player = survivalPlayer(helper);
+            String name = "withdraw_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+            return CapitalMC.serverUserManager.registerAsync(name, name, "", test.player.getUUID());
+        });
+        test.add(() -> {
+            test.user = (ServerUser) test.last;
+            CapitalMC.serverUserManager.activateVerified(test.player.getUUID(), test.user);
+            test.diamond = GameServices.get().assets.find("mc_diamond").orElseThrow().id();
+            return GameServices.get().settlements.account(test.user, AccountType.Spot)
+                    .thenCompose(account -> GameServices.get().settlements.update(account, test.diamond, 7));
+        });
+        test.add(() -> {
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            gui.showPage(PageType.DEPOSIT_WITHDRAW);
+            gui.open();
+            click(gui, 24);
+            var ready = new CompletableFuture<Void>();
+            test.poll = () -> {
+                gui.refresh();
+                var asset = gui.getGuiElement(18);
+                if (asset != null && asset.getItemStackForDisplay(gui).is(Items.DIAMOND))
+                {
+                    test.poll = () -> {
+                    };
+                    ready.complete(null);
+                }
+            };
+            return ready;
+        });
+        test.add(() -> {
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            check(gui.getGuiElement(19) == null, "Withdrawal picker includes an unowned asset");
+            check(gui.getGuiElement(0).getItemStackForDisplay(gui).is(Items.COMPASS), "Withdrawal search is missing");
+            check(gui.getGuiElement(1).getItemStackForDisplay(gui).is(Items.SPONGE), "Withdrawal clear search is missing");
+            check(gui.getGuiElement(7).getItemStackForDisplay(gui).is(Items.GOLDEN_BOOTS)
+                  && gui.getGuiElement(7).getItemStackForDisplay(gui).hasFoil(), "Withdrawal spot account is missing");
+            check(gui.getGuiElement(8).getItemStackForDisplay(gui).is(Items.CHAINMAIL_BOOTS), "Withdrawal contract transfer entry is missing");
+            click(gui, 0);
+            check(!chat(test.player, "no-such-withdrawal-asset"), "Withdrawal search broadcast");
+            gui.refresh();
+            check(gui.getGuiElement(18) == null, "Withdrawal search did not filter assets");
+            click(gui, 1);
+            gui.refresh();
+            click(gui, 18);
+            gui.refresh();
+            check(gui.getSelectedAsset() == test.diamond, "Withdrawal selection was not retained");
+            click(gui, 19);
+            check(CapitalMC.guiInputManager.isPaused(test.player.getUUID()), "Withdrawal did not request quantity");
+            check(gui.getSelectedAsset() == test.diamond, "Chat input cleared withdrawal selection");
+            check(!chat(test.player, "cancel"), "Withdrawal cancellation broadcast");
+            gui.refresh();
+            click(gui, 45);
+            gui.refresh();
+            check(gui.getSelectedAsset() == 0, "Withdrawal back retained selection");
+            click(gui, 45);
+            gui.refresh();
+            check(gui.getGuiElement(24).getItemStackForDisplay(gui).is(Items.BEETROOT_SOUP), "Back did not restore deposit/withdraw choice");
+            gui.selectAsset(test.diamond);
+            gui.showPage(PageType.HOME);
+            check(gui.getSelectedAsset() == 0, "Leaving bank page retained selection");
+            gui.showPage(PageType.TRANSFER);
+            gui.selectAsset(test.diamond);
+            gui.close();
+            check(gui.getSelectedAsset() == 0, "Closing transfer retained selection");
+            return CompletableFuture.completedFuture(null);
         });
         test.run();
     }
@@ -754,8 +1089,8 @@ public final class CapitalGameTests
             var gui = CapitalMC.guiManager.getTradingGui(test.player);
             gui.showPage(PageType.PEG);
             gui.open();
-            check(gui.getGuiElement(1).getItemStackForDisplay(gui).getHoverName().getString().equals("Buy base (pay quote)"), "Peg still assumes physical base");
-            check(gui.getGuiElement(1).getItemStackForDisplay(gui).hasFoil() && !gui.getGuiElement(2).getItemStackForDisplay(gui).hasFoil(), "Peg must initially select buy base");
+            check(gui.getGuiElement(0).getItemStackForDisplay(gui).getHoverName().getString().equals("Buy base (pay quote)"), "Peg still assumes physical base");
+            check(gui.getGuiElement(0).getItemStackForDisplay(gui).hasFoil() && !gui.getGuiElement(1).getItemStackForDisplay(gui).hasFoil(), "Peg must initially select buy base");
             int index = GameServices.get().currency.peggedAssets().indexOf(base[0].id());
             for (int page = 0; page < index / 27; page++)
             {
@@ -768,7 +1103,7 @@ public final class CapitalGameTests
             click(gui, slot);
             check(((MessagePlayer) test.player).messages.getLast().contains("Pay " + quote[0].displayName() + " → receive " + base[0].displayName()), "Buy input does not name the paid asset");
             check(!chat(test.player, "cancel"), "Peg cancellation was broadcast");
-            click(gui, 2);
+            click(gui, 1);
             gui.refresh();
             String reverse = "Pay: " + base[0].displayName() + " → Receive: " + quote[0].displayName();
             check(gui.getGuiElement(slot).getItemStackForDisplay(gui).get(DataComponents.LORE).lines().stream().anyMatch(line -> line.getString().contains(reverse)), "Sell tooltip reverses payment direction");
@@ -1344,6 +1679,19 @@ public final class CapitalGameTests
             {
                 click(gui, tab);
                 gui.refresh();
+                for (int slot = 9; slot < 18; slot++)
+                {
+                    check(gui.getGuiElement(slot) != null
+                          && gui.getGuiElement(slot).getItemStackForDisplay(gui).is(Items.STAINED_GLASS_PANE.gray()),
+                          "Admin tab is missing its navigation separator");
+                }
+                if (tab == 4)
+                {
+                    click(gui, 7);
+                    gui.refresh();
+                    check(gui.getGuiElement(7).getItemStackForDisplay(gui).is(Items.CHEST),
+                          "Audit list back button did not return to asset management");
+                }
                 if (tab == 3 && gui.getGuiElement(18) != null)
                 {
                     click(gui, 18);

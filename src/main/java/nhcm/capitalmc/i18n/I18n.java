@@ -19,7 +19,7 @@ import java.util.Optional;
 /**
  * Server-side translations, requiring no language pack on the client.
  */
-public final class I18n
+public class I18n
 {
     private static final String DEFAULT_LANGUAGE = "en_us";
     private static final Map<String, Map<String, String>> TRANSLATIONS = Map.of(

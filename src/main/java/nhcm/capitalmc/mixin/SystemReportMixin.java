@@ -4,10 +4,12 @@ import com.sun.management.OperatingSystemMXBean;
 import net.minecraft.SystemReport;
 import nhcm.capitalmc.WindowsDiagnostics;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import oshi.software.os.OperatingSystem;
+import oshi.software.os.OSProcess;
 
 import java.lang.management.ManagementFactory;
 import java.util.Locale;
@@ -22,6 +24,23 @@ public abstract class SystemReportMixin
         {
             return;
         }
+        capitalmc$writeJvmProcessMetrics();
+        ci.cancel();
+    }
+
+    @Inject(method = "putProcessDetails", at = @At("HEAD"), cancellable = true)
+    private void capitalmc$missingProcess(OSProcess process, CallbackInfo ci)
+    {
+        if (process == null)
+        {
+            capitalmc$writeJvmProcessMetrics();
+            ci.cancel();
+        }
+    }
+
+    @Unique
+    private void capitalmc$writeJvmProcessMetrics()
+    {
         var report = (SystemReport) (Object) this;
         var bean = ManagementFactory.getOperatingSystemMXBean();
         if (bean instanceof OperatingSystemMXBean process)
@@ -33,10 +52,9 @@ public abstract class SystemReportMixin
         }
         else
         {
-            report.setDetail("Process Loads", "Unavailable (Windows performance counters)");
-            report.setDetail("Process Committed Virtual Size (MiB)", "Unavailable (Windows performance counters)");
+            report.setDetail("Process Loads", "Unavailable (OSHI process information)");
+            report.setDetail("Process Committed Virtual Size (MiB)", "Unavailable (OSHI process information)");
         }
-        report.setDetail("Process Resident Size (MiB)", "Unavailable (Windows performance counters)");
-        ci.cancel();
+        report.setDetail("Process Resident Size (MiB)", "Unavailable (OSHI process information)");
     }
 }
