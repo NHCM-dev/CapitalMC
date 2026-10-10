@@ -21,7 +21,7 @@ Requires **Minecraft 26.3**, **Fabric Loader 0.19.5+**, **Fabric API for 26.3** 
 .\gradlew.bat build
 ```
 
-Place `build/libs/CapitalMC-0.2.0-SNAPSHOT.jar` and Fabric API in the server's `mods` folder. SGui and AdvMatch are bundled. The included AdvMatch library targets **Windows amd64**; other platforms need a matching native SDK build.
+Place `build/libs/CapitalMC-0.2.0-SNAPSHOT.jar` and Fabric API in the server's `mods` folder. SGui and AdvMatch are bundled. The included AdvMatch library supports **Windows amd64 and Linux amd64 (glibc)**; other platforms need a matching native SDK build. The current Linux bundle requires glibc 2.38+; see the AdvMatch build documentation.
 
 For development, run `.\gradlew.bat runServer` and accept the Minecraft EULA before starting the server. The build runs unit tests and Minecraft GameTests.
 

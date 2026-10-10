@@ -21,7 +21,7 @@
 .\gradlew.bat build
 ```
 
-将 `build/libs/CapitalMC-0.2.0-SNAPSHOT.jar` 和 Fabric API 放入服务器的 `mods` 目录。SGui 与 AdvMatch 已内置。当前 AdvMatch 包支持 **Windows amd64**；其他平台需要构建对应原生 SDK。
+将 `build/libs/CapitalMC-0.2.0-SNAPSHOT.jar` 和 Fabric API 放入服务器的 `mods` 目录。SGui 与 AdvMatch 已内置。当前 AdvMatch 包支持 **Windows amd64 和 Linux amd64（glibc）**；其他平台需要构建对应原生 SDK。当前 Linux 产物要求 glibc 2.38+，参见 AdvMatch 构建说明。
 
 开发时使用 `.\gradlew.bat runServer`，首次启动前阅读并接受 Minecraft EULA。完整构建会执行单元测试与 Minecraft GameTest。
 
