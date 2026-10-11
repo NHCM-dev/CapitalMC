@@ -39,9 +39,9 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
-    implementation 'nhcm:advmatch:2.0.0'
+    implementation 'nhcm:advmatch:2.0.1'
     implementation 'com.google.code.gson:gson:2.13.2'
-    include 'nhcm:advmatch:2.0.0'
+    include 'nhcm:advmatch:2.0.1'
 
     compileOnly("org.projectlombok:lombok:1.18.48")
     annotationProcessor("org.projectlombok:lombok:1.18.48")

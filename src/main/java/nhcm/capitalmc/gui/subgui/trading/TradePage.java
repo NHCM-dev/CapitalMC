@@ -596,7 +596,7 @@ public abstract class TradePage extends BaseSubGui
         return displayedClose.positions().stream()
                              .filter(position -> position.symbolId() == market.symbolId() && position.side() == positionSide
                                                  && !position.closed() && position.size() > 0)
-                             .sorted(Comparator.comparingLong(PositionView::positionId)).toList();
+                             .sorted(Comparator.comparingLong(PositionView::createdTimestamp).thenComparingLong(PositionView::positionId).reversed()).toList();
     }
 
     private PositionView closePosition()
@@ -640,7 +640,8 @@ public abstract class TradePage extends BaseSubGui
         }
         var position = closePosition();
         String lore = position == null ? GuiWidgets.text(gui, closeData.error() == null ? "ui.trade.no_position" : "ui.query_failed")
-                : GuiWidgets.text(gui, "ui.trade.close_position", position.positionId(), quantityText(closeAvailable()), position.leverage(), position.marginMode());
+                : GuiWidgets.text(gui, "ui.trade.close_position", position.positionId(), quantityText(closeAvailable()), position.leverage(), position.marginMode())
+                  + "\n" + FinancialText.times(position, gui.getPlayer());
         GuiWidgets.button(gui, 12, Items.SHIELD, "ui.trade.select_position", lore, () -> {
             if (!positions.isEmpty())
             {

@@ -4,6 +4,7 @@ import nhcm.advmatch.model.*;
 import nhcm.advmatch.BusinessException;
 
 import java.util.List;
+import java.util.Comparator;
 import java.util.stream.Collectors;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
@@ -32,6 +33,36 @@ public class ActivityScope
             case PositionView position -> position.symbolId();
             case ConditionalOrderView conditional -> conditional.request().symbolId();
             case TradeView trade -> trade.symbolId();
+            default -> 0;
+        };
+    }
+
+    public static <T> List<T> newest(List<T> rows)
+    {
+        return rows.stream().sorted(Comparator.comparingLong(ActivityScope::createdTime)
+                                  .thenComparingLong(ActivityScope::recordId).reversed()).toList();
+    }
+
+    private static long createdTime(Object row)
+    {
+        return switch (row)
+        {
+            case OrderView order -> order.createdTimestamp();
+            case PositionView position -> position.createdTimestamp();
+            case ConditionalOrderView conditional -> conditional.request().timestamp();
+            case TradeView trade -> trade.timestamp();
+            default -> 0;
+        };
+    }
+
+    private static long recordId(Object row)
+    {
+        return switch (row)
+        {
+            case OrderView order -> order.orderId();
+            case PositionView position -> position.positionId();
+            case ConditionalOrderView conditional -> conditional.conditionalOrderId();
+            case TradeView trade -> trade.recordId();
             default -> 0;
         };
     }

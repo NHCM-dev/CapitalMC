@@ -61,10 +61,10 @@ CapitalMC 的业务数据使用带校验的二进制 WAL 和状态快照。JSON 
 停止后台和所有网关，使用 JDK 25 运行独立后台 JAR：
 
 ```sh
-java -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage backup-save /path/to/capitalmc before-maintenance
-java -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage backup-list /path/to/capitalmc
-java -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage load /path/to/capitalmc before-maintenance /path/to/restored-capitalmc
-java -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage verify /path/to/restored-capitalmc
+java -jar CapitalMC-0.5.2-SNAPSHOT-exchange-server.jar --storage backup-save /path/to/capitalmc before-maintenance
+java -jar CapitalMC-0.5.2-SNAPSHOT-exchange-server.jar --storage backup-list /path/to/capitalmc
+java -jar CapitalMC-0.5.2-SNAPSHOT-exchange-server.jar --storage load /path/to/capitalmc before-maintenance /path/to/restored-capitalmc
+java -jar CapitalMC-0.5.2-SNAPSHOT-exchange-server.jar --storage verify /path/to/restored-capitalmc
 ```
 
 `backup-save` 先生成快照，再复制完整数据；`wal-save` 先刷盘，再保留现有快照及 WAL 尾部。两者均保存到同级 `capitalmc-backups/<名称>/`，附带 SHA-256 清单。恢复检查完整文件集合、校验和及独立重放结果，只发布到尚不存在的新目录，失败不会替换原数据。名称允许字母、数字、下划线和连字符，长度 1–64。失败可能保留未发布的 `.pending-*` / `.restore-pending-*` 目录，请停服检查。

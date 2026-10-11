@@ -30,6 +30,13 @@ public class ConditionalPage extends BaseSubGui
         super(gui, PageType.CONDITIONALS);
     }
 
+    @Override
+    public void onEnter()
+    {
+        getGui().selectConditional(0);
+        reset();
+    }
+
     private void reset()
     {
         cursor = new ReadCursor();
@@ -129,9 +136,10 @@ public class ConditionalPage extends BaseSubGui
             gui.setSlot(22, TradingGui.icon(gui.getPlayer(), Items.CLOCK, "ui.loading", ""));
             return;
         }
-        for (int i = 0; i < data.rows.size(); i++)
+        var rows = ActivityScope.newest(data.rows);
+        for (int i = 0; i < rows.size(); i++)
         {
-            var row = data.rows.get(i);
+            var row = rows.get(i);
             GuiWidgets.button(gui, 18 + i, row.request().kind() == ConditionalOrderKind.TakeProfit ? Items.EMERALD : Items.REDSTONE,
                               symbol(data, row).name() + " #" + row.conditionalOrderId(), FinancialText.lore(row, data.symbols, gui.getPlayer()),
                               () -> gui.selectConditional(row.conditionalOrderId()));

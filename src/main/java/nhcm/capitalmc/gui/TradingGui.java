@@ -175,6 +175,12 @@ public class TradingGui extends SimpleGui
         showPage(PageType.TRADING_SETTINGS);
     }
 
+    public void showContractSchedule(long symbolId)
+    {
+        ((TradingSettingsPage) pages.get(PageType.TRADING_SETTINGS)).selectSchedule(symbolId);
+        showPage(PageType.TRADING_SETTINGS);
+    }
+
     public AccountPage accountPage()
     {
         return (AccountPage) pages.get(PageType.MY_ACCOUNT);
@@ -284,8 +290,12 @@ public class TradingGui extends SimpleGui
         if (page != currentPage)
         {
             resetAccountOperation();
-            history.push(currentPage);
+            if (!currentPage.isActivityList() || !page.isActivityList())
+            {
+                history.push(currentPage);
+            }
             currentPage = page;
+            pages.get(page).onEnter();
         }
         renderPage();
     }

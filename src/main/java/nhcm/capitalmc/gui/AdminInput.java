@@ -8,8 +8,6 @@ import net.minecraft.server.permissions.Permissions;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.regex.Pattern;
@@ -399,14 +397,7 @@ public class AdminInput
 
     private static long timestamp(String text)
     {
-        try
-        {
-            String value = text.strip().replace(' ', 'T');
-            return (value.endsWith("Z") ? Instant.parse(value) : LocalDateTime.parse(value).toInstant(ZoneOffset.UTC)).toEpochMilli();
-        } catch (RuntimeException error)
-        {
-            throw new IllegalArgumentException("ui.form.timestamp");
-        }
+        return UtcTime.parse(text);
     }
 
     private record Change(JsonPrimitive raw, String input)
@@ -528,7 +519,7 @@ public class AdminInput
         }
         if (field.endsWith("Timestamp"))
         {
-            return new JsonPrimitive(text.equals("0") ? 0 : timestamp(text));
+            return new JsonPrimitive(field.equals("expiryTimestamp") ? UtcTime.future(text) : text.equals("0") ? 0 : timestamp(text));
         }
         if (field.equals("fundingInterval") || field.equals("maxAge"))
         {

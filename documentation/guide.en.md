@@ -40,7 +40,7 @@ Price ticks align prices; they do not force the next trade to rise. The contract
 
 ## Persistence
 
-`capitalmc/trades.dat` stores account metadata. Application metadata uses `services.json` and its adjacent WAL. Financial state belongs to AdvMatch, whose persistence directory is configured separately. World saves and exchange records are separate durability boundaries.
+Account and application metadata use binary WAL and snapshots; see [persistence](persistence.en.md) for store paths and recovery. Financial state belongs to AdvMatch, whose persistence directory is configured separately. World saves and exchange records are separate durability boundaries.
 
 Stop the server for a coordinated backup. Preserve custody and recovery evidence; do not repeat an uncertain deposit, withdrawal or delivery. Keep the SDK and native libraries matched.
 
@@ -59,3 +59,11 @@ Deposits can consume empty chests or shulker boxes held in the main hand to add 
 These deposits share custody records: persist intent, revalidate and remove containers/experience, save Minecraft data, then credit the account or container allowance. Minecraft saves and the exchange ledger are separate stores; interrupted records are quarantined for review after restart and never retried automatically.
 
 Exp is a special asset whose supply grows only through experience deposits. Item binding, issuance, burning, administrative balance adjustments and pegged exchange are disabled; its unit size is fixed at 1. Trading and account transfers remain available. Asset details show net external credits, ledger totals and circulating amounts excluding issuer holdings; unbanked game items and experience are outside these statistics.
+
+## Trading records and delivery dates
+
+Orders, positions, conditional orders and trade history are grouped by trading type across all pairs. Records show UTC creation/update times; orders also show fill and completion times. Newest records appear at the top left. Switching record tabs keeps the original trading/account page as the return destination. Reopening a list starts from its newest page.
+
+Closed positions show realized PnL, funding and paid fees. Unfilled orders that were cancelled do not count as historical positions. The engine clears live size and entry price at full close; these live fields are not presented as historical execution values. Closing orders remain in order history.
+
+For a future, open **Contract information → Delivery date** or **Exchange settings → Schedule** to set the actual delivery date. Administrators can enter `2027-01-31`, `2027-01-31 12:00:00` (UTC), ISO time with an offset, or Unix milliseconds. Dates must be in the future. The contract information page displays the configured date and contract status.

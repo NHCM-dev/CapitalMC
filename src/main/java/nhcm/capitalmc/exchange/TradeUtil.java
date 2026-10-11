@@ -1,11 +1,11 @@
 package nhcm.capitalmc.exchange;
 
 import nhcm.advmatch.BusinessException;
-import nhcm.advmatch.command.read.ReadOrders;
-import nhcm.advmatch.command.read.ReadPositions;
-import nhcm.advmatch.command.read.ReadTrades;
+import nhcm.advmatch.command.read.ReadOrdersNewest;
+import nhcm.advmatch.command.read.ReadPositionsNewest;
+import nhcm.advmatch.command.read.ReadTradesNewest;
 import nhcm.advmatch.command.read.ReadUserOpenOrders;
-import nhcm.advmatch.command.read.ReadConditionalOrders;
+import nhcm.advmatch.command.read.ReadConditionalOrdersNewest;
 import nhcm.advmatch.model.*;
 import nhcm.advmatch.object.*;
 import nhcm.capitalmc.account.ServerUser;
@@ -53,10 +53,9 @@ public class TradeUtil
             var query = bounded(backend.id(), symbol, cursor).withIncludeTerminal(history);
             if (!history && !cursor.started())
             {
-                return QueryUtil.liveRows(query.withKind(ReadKind.UserOpenOrders), OrderView.class).thenApply(TradeUtil::checked);
+                return QueryUtil.liveRows(query.withKind(ReadKind.OrdersNewest), OrderView.class).thenApply(TradeUtil::checked);
             }
-            return QueryUtil.exchange().submit(history ? new ReadOrders(query)
-                                                       : new ReadUserOpenOrders(query)).thenApply(TradeUtil::checked);
+            return QueryUtil.exchange().submit(new ReadOrdersNewest(query)).thenApply(TradeUtil::checked);
         });
     }
 
@@ -64,24 +63,24 @@ public class TradeUtil
     {
         return UserUtil.getUser(user).thenCompose(backend -> {
             var query = bounded(backend.id(), symbol, cursor).withIncludeTerminal(history)
-                                                             .withPositionFilter(history ? PositionFilter.All : PositionFilter.Open);
-            return !history && !cursor.started() ? QueryUtil.liveRows(query.withKind(ReadKind.Positions), PositionView.class).thenApply(TradeUtil::checked)
-                                                : QueryUtil.exchange().submit(new ReadPositions(query)).thenApply(TradeUtil::checked);
+                                                             .withPositionFilter(history ? PositionFilter.ClosedExecuted : PositionFilter.Open);
+            return !history && !cursor.started() ? QueryUtil.liveRows(query.withKind(ReadKind.PositionsNewest), PositionView.class).thenApply(TradeUtil::checked)
+                                                : QueryUtil.exchange().submit(new ReadPositionsNewest(query)).thenApply(TradeUtil::checked);
         });
     }
 
     public static CompletableFuture<ReadResponse<TradeView>> tradePage(ServerUser user, long symbol, ReadCursor cursor)
     {
-        return UserUtil.getUser(user).thenCompose(backend -> QueryUtil.exchange().submit(new ReadTrades(
+        return UserUtil.getUser(user).thenCompose(backend -> QueryUtil.exchange().submit(new ReadTradesNewest(
                 bounded(backend.id(), symbol, cursor))).thenApply(TradeUtil::checked));
     }
 
     public static CompletableFuture<ReadResponse<ConditionalOrderView>> conditionalPage(ServerUser user, boolean history, ReadCursor cursor)
     {
         return UserUtil.getUser(user).thenCompose(backend -> {
-            var query = bounded(backend.id(), 0, cursor).withIncludeTerminal(history).withKind(ReadKind.ConditionalOrders);
+            var query = bounded(backend.id(), 0, cursor).withIncludeTerminal(history).withKind(ReadKind.ConditionalOrdersNewest);
             return !history && !cursor.started() ? QueryUtil.liveRows(query, ConditionalOrderView.class).thenApply(TradeUtil::checked)
-                                                : QueryUtil.exchange().submit(new ReadConditionalOrders(query)).thenApply(TradeUtil::checked);
+                                                : QueryUtil.exchange().submit(new ReadConditionalOrdersNewest(query)).thenApply(TradeUtil::checked);
         });
     }
 

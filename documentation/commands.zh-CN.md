@@ -132,6 +132,7 @@ GUI：选择交易对 → 止盈止损 → 创建条件单。本页支持现货�
 | `/cmcadmin market add perpetual <name> <base> <quote> <price> <reason>` | 创建交易对 |
 | `/cmcadmin market add spot <name> <base> <quote> <reason>` | 创建交易对 |
 | `/cmcadmin market deliver <symbol> <price> <reason>` | 合约交割 |
+| `/cmcadmin market expiry <symbol> <expiry> <reason>` | 设置交割日期 |
 | `/cmcadmin market expire <symbol> <reason>` | 合约到期 |
 | `/cmcadmin market fees <symbol> <makerPercent> <takerPercent> <reason>` | 修改手续费 |
 | `/cmcadmin market funding <symbol> <percent> <reason>` | 修改资金费率 |
@@ -231,7 +232,7 @@ GUI：选择交易对 → 止盈止损 → 创建条件单。本页支持现货�
 
 - `asset`、`base`、`quote`：资产注册名、ID 或唯一匹配的显示名。`symbol`、`order`、`position`：交易所 ID。`username`：交易账户登录名，不是 Minecraft 名称。
 - `display`：带空格时用双引号；实物注册和绑定使用手持物品。`scale` 是原生小数精度，`unitSize` 是一个显示单位代表的实际单位数量。
-- `expiry`：Unix 毫秒时间戳。`percent`、maker/taker 手续费填百分数，`0.05` 表示 0.05%。
+- `expiry`：UTC 日期（`2027-01-31`）、加引号的 UTC 日期时间（`"2027-01-31 12:00:00"`）、带时区的 ISO 时间或 Unix 毫秒。`percent`、maker/taker 手续费填百分数，`0.05` 表示 0.05%。
 - `market lot`：每手 / 每张对应基础资产数量，再填最小手数与手数步长。最小数量和步长须符合原生规则。
 - `peg configure`：基础 / 报价资产、两边数量、手续费百分比、最小 / 最大基础数量、买入开关、卖出开关、启用开关。兑换输入是基础资产数量。`peg issue` 从发行账户向用户划转，`asset mint` 在发行账户创建电子资产供应量。
 - `market rules/schedule/reference set` 每次设置一个标量字段。Tab 包含嵌套风控 / 手续费路径、布尔和枚举选项。高级字段使用原生整数单位，费率为百万分之一，时间戳 / 时长为毫秒；显示单位输入请用 `tick`、`fees`、`minimum-quantity`、`minimum-notional`、`funding`、`lot`。来源列表用 source-add/remove 管理，无需 JSON。来源包含 spot 或 external 类型、ID、正权重及单位换算分子 / 分母。

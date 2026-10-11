@@ -61,10 +61,10 @@ Prefix each command with `/cmcadmin`. REMOTE gateways execute online operations 
 Stop the owner **and every gateway**. Use the standalone exchange-server JAR with JDK 25:
 
 ```sh
-java -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage backup-save /path/to/capitalmc before-maintenance
-java -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage backup-list /path/to/capitalmc
-java -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage load /path/to/capitalmc before-maintenance /path/to/restored-capitalmc
-java -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage verify /path/to/restored-capitalmc
+java -jar CapitalMC-0.5.2-SNAPSHOT-exchange-server.jar --storage backup-save /path/to/capitalmc before-maintenance
+java -jar CapitalMC-0.5.2-SNAPSHOT-exchange-server.jar --storage backup-list /path/to/capitalmc
+java -jar CapitalMC-0.5.2-SNAPSHOT-exchange-server.jar --storage load /path/to/capitalmc before-maintenance /path/to/restored-capitalmc
+java -jar CapitalMC-0.5.2-SNAPSHOT-exchange-server.jar --storage verify /path/to/restored-capitalmc
 ```
 
 `backup-save` checkpoints before copying. `wal-save` flushes and copies the existing snapshot plus its WAL tail. Both save complete data directories under the sibling `capitalmc-backups/<name>/`, with a SHA-256 manifest. Loading checks the complete file set and checksums, then validates metadata and native replay in isolation. It publishes only to a previously absent directory; failure does not replace the original data. Names allow letters, digits, `_` and `-` (1–64 characters). Unpublished `.pending-*` / `.restore-pending-*` directories can remain after failure; inspect them while stopped.

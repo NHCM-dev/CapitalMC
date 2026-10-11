@@ -1,5 +1,9 @@
 package nhcm.capitalmc.test;
 
+import nhcm.capitalmc.service.UtcTime;
+
+import com.google.gson.JsonPrimitive;
+
 import com.mojang.authlib.GameProfile;
 import com.google.gson.JsonParser;
 import eu.pb4.sgui.api.ClickType;
@@ -62,6 +66,7 @@ import nhcm.advmatch.command.contract.UpdateMarkPrice;
 import nhcm.capitalmc.exchange.PositionOrders;
 import nhcm.advmatch.model.MarginMode;
 import nhcm.advmatch.model.OrderSide;
+import nhcm.advmatch.model.OrderStatus;
 import nhcm.advmatch.model.OrderType;
 import nhcm.advmatch.model.OrderView;
 import nhcm.advmatch.model.PositionSide;
@@ -374,16 +379,14 @@ public final class CapitalGameTests
             return GameServices.get().settlements.account(test.user, AccountType.Contract)
                                                  .thenCompose(id -> GameServices.get().settlements.update(id, test.gold, 1100));
         });
-        test.add(() -> SymbolUtil.allSymbols().thenCompose(markets -> {
-            var existing = markets.stream().filter(s -> s.type() == SymbolType.Future && s.baseAssetId() == test.diamond && s.quoteAssetId() == test.gold).findFirst();
-            if (existing.isPresent())
-            {
-                return CompletableFuture.completedFuture(existing.get());
-            }
-            return GameServices.get().markets.createFuture("Capacity GUI Test", test.diamond, test.gold, 100,
+        test.add(() -> GameServices.get().assets.registerElectronic("capacity_" + UUID.randomUUID().toString().replace("-", ""), "Diamond", 0, new ItemStack(Items.DIAMOND)));
+        test.add(() -> {
+            test.diamond = ((McAssetRegistry.Asset) test.last).id();
+            return CompletableFuture.completedFuture(null);
+        });
+        test.add(() -> GameServices.get().markets.createFuture("Capacity " + UUID.randomUUID(), test.diamond, test.gold, 100,
                                                            new ContractSpec().withMakerFeeRate(0).withTakerFeeRate(0).withExpiryTimestamp(System.currentTimeMillis() + 86400000))
-                                             .thenCompose(Symbol::snapshot);
-        }));
+                                             .thenCompose(Symbol::snapshot));
         test.add(() -> {
             var gui = CapitalMC.guiManager.getTradingGui(test.player);
             gui.showTrading((SymbolView) test.last);
@@ -1767,6 +1770,106 @@ public final class CapitalGameTests
     }
 
     @GameTest(maxTicks = 2400)
+    public void futureDeliveryDateIsConfiguredAndDisplayed(GameTestHelper helper)
+    {
+        var test = new Steps(helper);
+        var market = new SymbolView[1];
+        long expiry = UtcTime.future("2028-01-31");
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        test.add(CapitalGameTests::testAssets);
+        test.add(() -> {
+            test.player = survivalPlayer(helper);
+            test.player.level().getServer().getPlayerList().op(new NameAndId(test.player.getGameProfile()),
+                                                               Optional.of(LevelBasedPermissionSet.OWNER), Optional.of(false));
+            return CapitalMC.serverUserManager.registerAsync("Delivery date", "expiry_" + suffix, "", test.player.getUUID());
+        });
+        test.add(() -> {
+            test.user = (ServerUser) test.last;
+            CapitalMC.serverUserManager.activateVerified(test.player.getUUID(), test.user);
+            return GameServices.get().assets.registerElectronic("delivery_" + suffix, "Delivery base", 0, new ItemStack(Items.DIAMOND));
+        });
+        test.add(() -> {
+            long base = ((McAssetRegistry.Asset) test.last).id();
+            long quote = GameServices.get().assets.find("mc_gold_ingot").orElseThrow().id();
+            return GameServices.get().markets.createFuture("Delivery " + suffix, base, quote, 100,
+                                                           new ContractSpec().withExpiryTimestamp(System.currentTimeMillis() + 86400000)).thenCompose(Symbol::snapshot);
+        });
+        test.add(() -> {
+            market[0] = (SymbolView) test.last;
+            var patch = AdminInput.patchValue(market[0], "expiryTimestamp", new JsonPrimitive(1), "2028-01-31");
+            check(patch.getAsLong() == expiry, "Date input did not map to the correct UTC expiry");
+            return GameServices.get().administration.action("schedule", new String[]{Long.toString(market[0].symbolId()), "{\"expiryTimestamp\":" + expiry + "}"},
+                                                           new ItemStack(Items.CLOCK), "gametest", "Verify delivery date");
+        });
+        test.add(() -> CapitalMC.exchange.contracts().market(CapitalMC.exchange.symbols().get(market[0].symbolId())));
+        test.add(() -> {
+            check(((MarketView) test.last).spec().expiryTimestamp() == expiry, "Delivery date was not applied to the native market");
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            gui.showTrading(market[0]);
+            gui.showPage(PageType.SYMBOL_INFO);
+            gui.open();
+            var loaded = new CompletableFuture<Void>();
+            test.poll = () -> {
+                gui.refresh();
+                var element = gui.getGuiElement(22);
+                if (element != null && element.getItemStackForDisplay(gui).getOrDefault(DataComponents.LORE, ItemLore.EMPTY).lines().stream()
+                                              .anyMatch(line -> line.getString().contains("2028-01-31 00:00:00.000 UTC")))
+                {
+                    loaded.complete(null);
+                }
+            };
+            return loaded;
+        });
+        test.add(() -> {
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            click(gui, 31);
+            gui.tick();
+            check(gui.getCurrentPage() == PageType.TRADING_SETTINGS, "Delivery date button did not open settings");
+            check(gui.getGuiElement(3).getItemStackForDisplay(gui).hasFoil(), "Delivery date button did not select Schedule");
+            gui.close();
+            return CompletableFuture.completedFuture(null);
+        });
+        test.run();
+    }
+
+    @GameTest(maxTicks = 2400)
+    public void activityTabsReturnToTheirEntryPage(GameTestHelper helper)
+    {
+        var test = new Steps(helper);
+        test.add(CapitalGameTests::testAssets);
+        test.add(() -> {
+            test.player = survivalPlayer(helper);
+            return CapitalMC.serverUserManager.registerAsync("Navigation", "nav_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16), "", test.player.getUUID());
+        });
+        test.add(() -> {
+            test.user = (ServerUser) test.last;
+            CapitalMC.serverUserManager.activateVerified(test.player.getUUID(), test.user);
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            gui.open();
+            for (var origin : List.of(PageType.MY_ACCOUNT, PageType.TRADE_CONTRACT))
+            {
+                gui.showPage(origin);
+                gui.showActivity(SymbolType.Perpetual, PageType.ORDERS);
+                for (var tab : List.of(PageType.POSITIONS, PageType.ORDER_HISTORY, PageType.POSITION_HISTORY, PageType.CONDITIONALS, PageType.TRADES))
+                {
+                    gui.showPage(tab);
+                }
+                gui.goBack();
+                check(gui.getCurrentPage() == origin, "Activity tabs changed the return destination: " + origin);
+                gui.showActivity(SymbolType.Perpetual, PageType.POSITIONS);
+                gui.showPage(PageType.POSITION);
+                gui.goBack();
+                check(gui.getCurrentPage() == PageType.POSITIONS, "Position detail did not return to its list");
+                gui.goBack();
+                check(gui.getCurrentPage() == origin, "Position list lost its original entry page");
+            }
+            gui.close();
+            return CompletableFuture.completedFuture(null);
+        });
+        test.run();
+    }
+
+    @GameTest(maxTicks = 2400)
     public void navigationButtonsRefreshWithoutReopening(GameTestHelper helper)
     {
         var test = new Steps(helper);
@@ -2348,7 +2451,13 @@ public final class CapitalGameTests
         test.add(() -> {
             check(((PositionView) test.last).closed(), "Take-profit market close did not close the selected position");
             var options = new ContractOrderOptions().withLeverage(2).withMarginMode(MarginMode.Isolated);
-            return GameServices.get().settlements.place(counter[0], market[0].symbolId(), OrderSide.Ask, OrderType.Limit, TimeInForce.GTC, 110, 4, options)
+            return TradeUtil.positionPage(test.user, true, market[0].symbolId(), new ReadCursor()).thenCompose(history -> {
+                check(history.values().stream().anyMatch(row -> row.positionId() == position[0].positionId() && row.closed()), "Fully closed position is missing from history");
+                return TradeUtil.orderPage(test.user, true, market[0].symbolId(), new ReadCursor());
+            }).thenCompose(history -> {
+                check(history.values().stream().anyMatch(row -> row.reduceOnly() && row.filling().status() == OrderStatus.Filled), "Filled closing order is missing from history");
+                return GameServices.get().settlements.place(counter[0], market[0].symbolId(), OrderSide.Ask, OrderType.Limit, TimeInForce.GTC, 110, 4, options);
+            })
                                                  .thenCompose(unused -> GameServices.get().settlements.place(test.user, market[0].symbolId(), OrderSide.Bid, OrderType.Limit, TimeInForce.IOC, 110, 4, options));
         });
         test.add(() -> TradeUtil.positions(test.user));
@@ -2428,7 +2537,9 @@ public final class CapitalGameTests
                     if (!item.getHoverName().getString().contains("#" + position[0].positionId())) continue;
                     var lines = item.getOrDefault(DataComponents.LORE, ItemLore.EMPTY).lines();
                     check(lines.stream().anyMatch(line -> line.getString().contains("Protect quote")), "PnL / prices have no quote units");
-                    check(lines.stream().anyMatch(line -> line.getString().contains("Protect base")), "Quantity has no base units");
+                    check(lines.stream().anyMatch(line -> line.getString().contains("Closed")), "Closed position state is missing");
+                    check(lines.stream().anyMatch(line -> line.getString().contains("UTC")), "Closed position timestamps are missing");
+                    check(lines.stream().noneMatch(line -> line.getString().contains("Entry price")), "Closed position shows a cleared live entry price");
                     check(lines.stream().anyMatch(line -> hasColor(line, 0x55ff55)), "Long direction lost its green text style");
                     check(gui.getSelectedSymbol().symbolId() == other.symbolId(), "Browsing unexpectedly rewrote the trading ticket");
                     done.complete(null);

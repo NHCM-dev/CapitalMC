@@ -25,6 +25,10 @@ public abstract class BaseSubGui
         this.page = Objects.requireNonNull(page, "page");
     }
 
+    public void onEnter()
+    {
+    }
+
     public final TradingGui getGui()
     {
         return gui;

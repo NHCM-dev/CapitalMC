@@ -74,6 +74,12 @@ public class TradingSettingsPage extends BaseSubGui
         settings.invalidate();
     }
 
+    public void selectSchedule(long id)
+    {
+        select(id);
+        tab = Tab.SCHEDULE;
+    }
+
     private boolean allowed()
     {
         var gui = getGui();

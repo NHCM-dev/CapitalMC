@@ -1,6 +1,7 @@
 package nhcm.capitalmc.gui.subgui.trading;
 
 import net.minecraft.world.item.Items;
+import net.minecraft.server.permissions.Permissions;
 import nhcm.advmatch.model.*;
 import nhcm.capitalmc.CapitalMC;
 import nhcm.capitalmc.exchange.*;
@@ -60,6 +61,16 @@ public class SymbolInfoPage extends BaseSubGui
         if (data.contract != null)
         {
             lore += "\n" + GuiWidgets.text(gui, "ui.symbol.contract", baseUnits.price(data.contract.markPrice(), quoteUnits), data.contract.spec().maxLeverage(), data.contract.status());
+            if (data.symbol.type() == SymbolType.Future)
+            {
+                lore += "\n" + GuiWidgets.text(gui, "ui.symbol.expiry", FinancialText.time(data.contract.spec().expiryTimestamp()));
+                if (gui.getPlayer().permissions().hasPermission(Permissions.COMMANDS_OWNER))
+                {
+                    GuiWidgets.button(gui, 31, Items.CLOCK, "ui.form.field.expiryTimestamp", "ui.symbol.expiry_edit", () -> {
+                        gui.showContractSchedule(data.symbol.symbolId());
+                    });
+                }
+            }
             if (data.contract.referencePrices().indexPrice() <= 0)
             {
                 lore += "\n" + GuiWidgets.text(gui, "ui.symbol.no_index");

@@ -26,6 +26,12 @@ public class ActivityPage extends BaseSubGui
     private final Deque<ReadCursor> previous = new ArrayDeque<>();
     private ReadPage queryPage = new ReadPage();
 
+    @Override
+    public void onEnter()
+    {
+        reset();
+    }
+
     private void reset()
     {
         cursor = new ReadCursor();
@@ -106,7 +112,7 @@ public class ActivityPage extends BaseSubGui
         }
         if (getPage() == PageType.ORDERS)
         {
-            var orders = data.orders;
+            var orders = ActivityScope.newest(data.orders);
             count = orders.size();
             page = GuiWidgets.clamp(page, count);
             for (int i = page * 27; i < Math.min(count, page * 27 + 27); i++)
@@ -119,7 +125,7 @@ public class ActivityPage extends BaseSubGui
         }
         else
         {
-            var positions = data.positions;
+            var positions = ActivityScope.newest(data.positions);
             count = positions.size();
             page = GuiWidgets.clamp(page, count);
             for (int i = page * 27; i < Math.min(count, page * 27 + 27); i++)

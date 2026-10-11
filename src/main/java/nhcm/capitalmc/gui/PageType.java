@@ -34,6 +34,12 @@ public enum PageType
         this.titleKey = titleKey;
     }
 
+    public boolean isActivityList()
+    {
+        return this == ORDERS || this == POSITIONS || this == ORDER_HISTORY || this == POSITION_HISTORY
+               || this == CONDITIONALS || this == TRADES;
+    }
+
     public String getTitleKey()
     {
         return titleKey;

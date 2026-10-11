@@ -1,5 +1,7 @@
 package nhcm.capitalmc.command;
 
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.mojang.brigadier.arguments.*;
@@ -93,6 +95,7 @@ public class AdminCommand extends BaseCommand
         });
         mutation(root, "market mark", "mark", "symbol price");
         mutation(root, "market funding", "funding-percent", "symbol percent");
+        mutation(root, "market expiry", "schedule", "symbol expiry");
         mutation(root, "market expire", "expire", "symbol");
         mutation(root, "market deliver", "deliver", "symbol price");
         for (String kind : List.of("rules", "schedule", "reference"))
@@ -206,7 +209,12 @@ public class AdminCommand extends BaseCommand
         {
             return Commands.argument(name, StringArgumentType.greedyString());
         }
-        if (Set.of("symbol", "order", "position", "sourceId", "expiry", "weight", "numerator", "denominator").contains(name))
+        if (name.equals("expiry"))
+        {
+            return Commands.argument(name, StringArgumentType.string()).suggests((context, builder) ->
+                    SharedSuggestionProvider.suggest(List.of(LocalDate.now(ZoneOffset.UTC).plusDays(7).toString()), builder));
+        }
+        if (Set.of("symbol", "order", "position", "sourceId", "weight", "numerator", "denominator").contains(name))
         {
             var node = Commands.argument(name, LongArgumentType.longArg(1));
             if (name.equals("symbol"))
@@ -224,7 +232,7 @@ public class AdminCommand extends BaseCommand
                     return CapitalMC.exchange.positions().list(q).thenApply(rows -> SharedSuggestionProvider.suggest(rows.values().stream().map(v -> Long.toString(v.positionId())), b).getNow(b.build()));
                 });
             }
-            return node.suggests((c, b) -> SharedSuggestionProvider.suggest(name.equals("expiry") ? List.of(Long.toString(System.currentTimeMillis() + 86_400_000L)) : List.of("1"), b));
+            return node.suggests((c, b) -> SharedSuggestionProvider.suggest(List.of("1"), b));
         }
         if (name.equals("page") || name.equals("scale"))
         {
@@ -317,7 +325,7 @@ public class AdminCommand extends BaseCommand
                 list.addFirst(path.substring(path.lastIndexOf(' ') + 1));
                 if (list.getFirst().equals("future"))
                 {
-                    list.set(5, "{\"expiryTimestamp\":" + list.get(5) + "}");
+                    list.set(5, "{\"expiryTimestamp\":" + UtcTime.future(list.get(5)) + "}");
                 }
                 args = list.toArray(String[]::new);
             }
@@ -328,6 +336,10 @@ public class AdminCommand extends BaseCommand
             else if (path.startsWith("exchange") && !action.equals("checkpoint"))
             {
                 args = new String[]{"0"};
+            }
+            else if (path.equals("market expiry"))
+            {
+                args = new String[]{args[0], "{\"expiryTimestamp\":" + UtcTime.future(args[1]) + "}"};
             }
             else if (Set.of("rules", "schedule", "reference").contains(action))
             {

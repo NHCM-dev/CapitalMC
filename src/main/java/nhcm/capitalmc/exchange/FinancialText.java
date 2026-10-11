@@ -7,6 +7,9 @@ import nhcm.capitalmc.i18n.I18n;
 import nhcm.capitalmc.service.*;
 
 import java.util.List;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.math.BigInteger;
 
 /**
@@ -84,7 +87,7 @@ public class FinancialText
                                   cap == 0 ? "—" : base.units().price(cap, quote.units()), quote.displayName(), base.displayName(),
                                   conditional.rejectReason() == null ? "—" : ExchangeMessages.label(player, conditional.rejectReason()));
             var options = request.contractOptions();
-            return details + "\n" + text(player, "ui.conditional.execution_details", request.timeInForce(), options == null ? 1 : options.leverage(),
+            return details + "\n" + times(conditional, player) + "\n" + text(player, "ui.conditional.execution_details", request.timeInForce(), options == null ? 1 : options.leverage(),
                                          options == null ? "—" : options.marginMode(), base.units().price(conditional.triggeredPrice(), quote.units()), options != null && options.reduceOnly());
         }
         if (row instanceof OrderView order)
@@ -96,10 +99,16 @@ public class FinancialText
             {
                 result += "\n" + text(player, "ui.activity.order_contract", order.positionId(), order.leverage(), order.marginMode() == null ? "—" : order.marginMode(), order.reduceOnly());
             }
-            return result;
+            return result + "\n" + times(order, player);
         }
         if (row instanceof PositionView position)
         {
+            if (position.closed())
+            {
+                return text(player, "ui.activity.position_closed", position.side(), pnl(position.realizedPnL(), quote),
+                            pnl(position.fundingPnL(), quote), quote.format(position.paidFees()), quote.displayName(), position.leverage(), position.marginMode())
+                       + "\n" + times(position, player);
+            }
             String liquidation = position.marginMode() == MarginMode.Cross ? text(player, "ui.activity.cross_liquidation")
                     : position.predictedLiquidationPrice() <= 0 ? text(player, "ui.activity.no_liquidation") : price(symbol, position.predictedLiquidationPrice());
             String result = text(player, "ui.activity.position_details", position.side(), quantity(symbol, position.size(), player),
@@ -109,10 +118,41 @@ public class FinancialText
             {
                 result += "\n" + text(player, "ui.activity.unmanaged");
             }
-            return result;
+            return result + "\n" + times(position, player);
         }
         var trade = (TradeView) row;
-        return text(player, "ui.activity.trade_details", price(symbol, trade.trade().price()), quantity(symbol, trade.trade().quantity(), player), trade.timestamp(), trade.trade().makerOrderId(), trade.trade().takerOrderId());
+        return text(player, "ui.activity.trade_details", price(symbol, trade.trade().price()), quantity(symbol, trade.trade().quantity(), player), time(trade.timestamp()), trade.trade().makerOrderId(), trade.trade().takerOrderId());
+    }
+
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS 'UTC'").withZone(ZoneOffset.UTC);
+
+    public static String time(long timestamp)
+    {
+        return timestamp <= 0 ? "—" : TIME.format(Instant.ofEpochMilli(timestamp));
+    }
+
+    public static String times(Object row, ServerPlayer player)
+    {
+        String result;
+        if (row instanceof OrderView order)
+        {
+            result = text(player, "ui.activity.times", time(order.createdTimestamp()), time(order.updatedTimestamp()));
+            if (order.firstFilledTimestamp() > 0)
+            {
+                result += "\n" + text(player, "ui.activity.fill_times", time(order.firstFilledTimestamp()), time(order.lastFilledTimestamp()));
+            }
+            if (order.completedTimestamp() > 0)
+            {
+                result += "\n" + text(player, "ui.activity.completed_time", time(order.completedTimestamp()));
+            }
+            return result;
+        }
+        if (row instanceof PositionView position)
+        {
+            return text(player, "ui.activity.times", time(position.createdTimestamp()), time(position.updatedTimestamp()));
+        }
+        var conditional = (ConditionalOrderView) row;
+        return text(player, "ui.activity.conditional_times", time(conditional.request().timestamp()), time(conditional.updatedTimestamp()));
     }
 
     public static String price(SymbolView symbol, long raw)

@@ -132,6 +132,7 @@ Use actual IDs from `/trade markets`, `/positions` and `/conditional`. The OCO e
 | `/cmcadmin market add perpetual <name> <base> <quote> <price> <reason>` | Symbol |
 | `/cmcadmin market add spot <name> <base> <quote> <reason>` | Symbol |
 | `/cmcadmin market deliver <symbol> <price> <reason>` | Deliver |
+| `/cmcadmin market expiry <symbol> <expiry> <reason>` | Set delivery date |
 | `/cmcadmin market expire <symbol> <reason>` | Expire |
 | `/cmcadmin market fees <symbol> <makerPercent> <takerPercent> <reason>` | Fees |
 | `/cmcadmin market funding <symbol> <percent> <reason>` | Funding percent |
@@ -231,7 +232,7 @@ Use actual IDs from `/trade markets`, `/positions` and `/conditional`. The OCO e
 
 - `asset`, `base`, `quote`: registered asset name, ID or uniquely matching display name. `symbol`, `order`, `position`: exchange IDs. `username`: trading login name, not Minecraft name.
 - `display`: quoted display name; item registration / binding uses the held item. `scale`: native decimal precision. `unitSize`: actual units represented by one displayed unit.
-- `expiry`: Unix timestamp in milliseconds. `percent`, maker/taker fees: human percentages (`0.05` means 0.05%).
+- `expiry`: UTC date (`2027-01-31`), quoted UTC date/time (`"2027-01-31 12:00:00"`), ISO time with an offset, or Unix milliseconds. `percent`, maker/taker fees: human percentages (`0.05` means 0.05%).
 - `market lot`: base amount per lot/contract, then minimum lots and lot step. Minimum quantities and steps must satisfy native rules.
 - `peg configure`: base/quote, base amount, quote amount, fee percentage, minimum/maximum base amount, buy enabled, sell enabled, enabled. Amount input is base quantity. `peg issue` moves issuer funds to a user; `asset mint` creates electronic supply in the issuer account.
 - `market rules/schedule/reference set`: one scalar field per command. Tab includes nested risk/fee paths, booleans and enum values. These advanced fields use native integer units (rates in millionths, timestamps/durations in milliseconds); use `tick`, `fees`, `minimum-quantity`, `minimum-notional`, `funding` and `lot` for displayed-unit inputs. Source add/remove manages the source list without JSON. A source has type `spot` or `external`, ID, positive weight and numerator/denominator for unit conversion.

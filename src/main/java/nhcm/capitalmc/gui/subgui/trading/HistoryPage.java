@@ -37,6 +37,12 @@ public class HistoryPage extends BaseSubGui
         super(gui, page);
     }
 
+    @Override
+    public void onEnter()
+    {
+        reset();
+    }
+
     private void reset()
     {
         cursor = new ReadCursor();
@@ -76,7 +82,7 @@ public class HistoryPage extends BaseSubGui
                 case ORDER_HISTORY -> ActivityScope.page(next -> TradeUtil.orderPage(current, true, 0, next), context.cursor(),
                                                         row -> scope.test(row) && ActivityScope.terminal(row));
                 case POSITION_HISTORY -> ActivityScope.page(next -> TradeUtil.positionPage(current, true, 0, next), context.cursor(),
-                                                           row -> scope.test(row) && (row.closed() || row.size() == 0));
+                                                           row -> scope.test(row) && row.closed());
                 default -> ActivityScope.page(next -> TradeUtil.tradePage(current, 0, next), context.cursor(),
                                               scope);
             };
@@ -89,7 +95,7 @@ public class HistoryPage extends BaseSubGui
             return;
         }
         int slot = 18;
-        for (Object row : displayed.rows.values())
+        for (Object row : ActivityScope.newest(displayed.rows.values()))
         {
             long id, market;
             String details;

@@ -13,6 +13,15 @@ import static org.junit.jupiter.api.Assertions.*;
 class ActivityScopeTest
 {
     @Test
+    void recordsSortByCreationTimeWithStableIdTies()
+    {
+        var first = new ConditionalOrderView(1, new ConditionalOrderRequest().withTimestamp(30), ConditionalOrderStatus.Waiting, 0, 0, 0, 0, null);
+        var second = new ConditionalOrderView(2, new ConditionalOrderRequest().withTimestamp(10), ConditionalOrderStatus.Waiting, 0, 0, 0, 0, null);
+        var third = new ConditionalOrderView(3, new ConditionalOrderRequest().withTimestamp(30), ConditionalOrderStatus.Waiting, 0, 0, 0, 0, null);
+        assertEquals(List.of(third, first, second), ActivityScope.newest(List.of(second, first, third)));
+    }
+
+    @Test
     void allSymbolsOfOneTypeMatchAndOtherTypesDoNot()
     {
         var symbols = List.of(new SymbolView(1, SymbolType.Perpetual, 1, 2, true, "A", new TradingRules()),

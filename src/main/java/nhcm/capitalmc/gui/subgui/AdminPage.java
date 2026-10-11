@@ -5,9 +5,9 @@ import net.minecraft.world.item.*;
 import nhcm.advmatch.BusinessException;
 import nhcm.advmatch.command.persistence.ReadPersistenceStatus;
 import nhcm.advmatch.command.read.ReadBalances;
-import nhcm.advmatch.command.read.ReadOrders;
-import nhcm.advmatch.command.read.ReadPositions;
-import nhcm.advmatch.command.read.ReadTrades;
+import nhcm.advmatch.command.read.ReadOrdersNewest;
+import nhcm.advmatch.command.read.ReadPositionsNewest;
+import nhcm.advmatch.command.read.ReadTradesNewest;
 import nhcm.advmatch.command.read.ReadUser;
 import nhcm.advmatch.model.*;
 import nhcm.capitalmc.CapitalMC;
@@ -558,9 +558,9 @@ public class AdminPage extends BaseSubGui
         investigationData = investigated.get(requestedUser + ":" + kind + ":" + cursor, () -> {
             CompletableFuture<? extends ReadResponse<?>> work = switch (kind)
             {
-                case ORDERS -> CapitalMC.exchange.submit(new ReadOrders(query));
-                case POSITIONS -> CapitalMC.exchange.submit(new ReadPositions(query));
-                case TRADES -> CapitalMC.exchange.submit(new ReadTrades(query));
+                case ORDERS -> CapitalMC.exchange.submit(new ReadOrdersNewest(query));
+                case POSITIONS -> CapitalMC.exchange.submit(new ReadPositionsNewest(query));
+                case TRADES -> CapitalMC.exchange.submit(new ReadTradesNewest(query));
                 default -> CapitalMC.exchange.submit(new ReadUser(new ObservationQuery().withUserId(requestedUser)))
                                              .thenCompose(response -> {
                                                  if (response.page().state() != ReadState.Success || response.values().isEmpty())
@@ -585,7 +585,7 @@ public class AdminPage extends BaseSubGui
             return;
         }
         int slot = 18;
-        for (var row : investigationData.rows.values())
+        for (var row : ActivityScope.newest(investigationData.rows.values()))
         {
             String description = FinancialText.lore(row, investigationData.markets, gui.getPlayer());
             GuiWidgets.button(gui, slot++, Items.PAPER, description, "", () -> GuiActions.message(gui, description));
