@@ -7,6 +7,8 @@ import java.nio.file.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
+import nhcm.capitalmc.service.BinaryStateStore;
+import nhcm.capitalmc.service.PersistenceSettings;
 
 /** Deployment provenance; separate from native WAL and compatible account file schemas. */
 public class DataCompatibility
@@ -33,24 +35,24 @@ public class DataCompatibility
     {
         var status = new DataCompatibility();
         Path marker = directory.resolve("data-version.json");
-        if (Files.exists(marker))
+        var store = new BinaryStateStore(PersistenceSettings.storeDirectory(marker), PersistenceSettings.load(directory).metadataOptions());
+        if (!store.initialized() && Files.exists(marker))
         {
-            try
-            {
-                var data = JsonParser.parseString(Files.readString(marker)).getAsJsonObject();
-                String stored = data.get("capitalmcVersion").getAsString();
-                if (!stored.equals(version())) status.warn(directory.toString(), stored, version());
-                if (data.get("schema").getAsInt() != 1) status.warn(directory.toString(), "schema " + data.get("schema"), "schema 1");
-            }
-            catch (RuntimeException error)
-            {
-                status.warn(directory.toString(), "unknown", version());
-            }
+            store.importState(JsonParser.parseString(Files.readString(marker)).getAsJsonObject(), 0);
+        }
+        if (store.initialized())
+        {
+            var data = store.snapshot();
+            String stored = data.get("capitalmcVersion").getAsString();
+            if (!stored.equals(version())) status.warn(directory.toString(), stored, version());
+            if (data.get("schema").getAsInt() != 1) status.warn(directory.toString(), "schema " + data.get("schema"), "schema 1");
             return status;
         }
         boolean existing = Files.exists(directory.resolve("services.json")) || Files.exists(directory.resolve("users.dat"))
                            || Files.exists(directory.resolve("users.json")) || Files.exists(directory.resolve("exchange"))
-                           || Files.exists(directory.resolve("shared-services.json"));
+                           || Files.exists(directory.resolve("shared-services.json"))
+                           || Files.exists(directory.resolve("users.store-path")) || Files.exists(directory.resolve("exchange.store-path"))
+                           || Files.exists(directory.resolve("services.store-path")) || Files.exists(directory.resolve("shared-services.store-path"));
         if (existing)
         {
             status.warn(directory.toString(), "unknown", version());
@@ -60,7 +62,7 @@ public class DataCompatibility
         var data = new JsonObject();
         data.addProperty("schema", 1);
         data.addProperty("capitalmcVersion", version());
-        Files.writeString(marker, new GsonBuilder().setPrettyPrinting().create().toJson(data), StandardOpenOption.CREATE_NEW);
+        store.importState(data, 0);
         return status;
     }
 

@@ -1,6 +1,7 @@
 package nhcm.capitalmc.backend;
 
 import com.google.gson.JsonObject;
+import nhcm.capitalmc.service.ServiceState;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -17,7 +18,8 @@ class DataCompatibilityTest
     void freshDataRecordsVersionAndReopeningDoesNotWarn() throws Exception
     {
         assertTrue(DataCompatibility.inspect(directory).warnings().isEmpty());
-        assertTrue(Files.readString(directory.resolve("data-version.json")).contains(DataCompatibility.version()));
+        assertEquals(DataCompatibility.version(), new ServiceState(directory.resolve("data-version.json")).snapshot().get("capitalmcVersion").getAsString());
+        assertFalse(Files.exists(directory.resolve("data-version.json")));
         assertTrue(DataCompatibility.inspect(directory).warnings().isEmpty());
     }
 
@@ -29,11 +31,12 @@ class DataCompatibilityTest
         Files.writeString(marker, old);
         assertEquals("old-release", DataCompatibility.inspect(directory).warnings().getFirst().stored());
         assertEquals(old, Files.readString(marker));
-        Files.delete(marker);
-        Files.writeString(directory.resolve("services.json"), "{\"original\":true}");
-        assertEquals("unknown", DataCompatibility.inspect(directory).warnings().getFirst().stored());
-        assertFalse(Files.exists(marker));
-        assertEquals("{\"original\":true}", Files.readString(directory.resolve("services.json")));
+        Path unversioned = directory.resolve("unversioned");
+        Files.createDirectories(unversioned);
+        Files.writeString(unversioned.resolve("services.json"), "{\"original\":true}");
+        assertEquals("unknown", DataCompatibility.inspect(unversioned).warnings().getFirst().stored());
+        assertFalse(Files.exists(unversioned.resolve("data-version.json")));
+        assertEquals("{\"original\":true}", Files.readString(unversioned.resolve("services.json")));
     }
 
     @Test

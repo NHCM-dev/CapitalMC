@@ -8,6 +8,7 @@ import nhcm.advmatch.model.*;
 import nhcm.advmatch.remote.*;
 import nhcm.capitalmc.management.ServerUserManager;
 import nhcm.capitalmc.service.ApplicationExecutors;
+import nhcm.capitalmc.service.PersistenceSettings;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,7 +33,7 @@ public class ExchangeRuntime implements AutoCloseable
         compatibility = DataCompatibility.inspect(directory);
         if (config.mode == NetworkConfig.Mode.REMOTE)
         {
-            if (users.size() != 0 || Files.exists(directory.resolve("exchange")))
+            if (users.size() != 0 || (Files.exists(directory.resolve("exchange")) || Files.exists(directory.resolve("exchange.store-path"))))
             {
                 throw new IllegalStateException("Move the existing LOCAL exchange and account registry to the owner before enabling REMOTE; see cross-server documentation");
             }
@@ -96,10 +97,32 @@ public class ExchangeRuntime implements AutoCloseable
 
     public static ExchangeConfig nativeConfig(Path directory)
     {
-        var persistence = new PersistenceConfig(true, directory.toString(), FlushPolicy.Batch, 256, 10, 0, 2, true,
+        PersistenceSettings settings;
+        try
+        {
+            settings = PersistenceSettings.load(directory.toAbsolutePath().getParent());
+        }
+        catch (IOException error)
+        {
+            throw new UncheckedIOException(error);
+        }
+        var persistence = new PersistenceConfig(true, nativeDirectory(directory).toString(), FlushPolicy.Batch, settings.flushEveryCommands,
+                settings.flushIntervalMilliseconds, settings.exchangeSnapshotEverySequences, settings.exchangeRetainedSnapshots, true,
                 TailRecovery.TruncateIncomplete, 1048576, 4294967296L, 10000, true);
         var observation = new ObservationConfig(1024, 16384, 256, 131072, true, 0, 4096, 4096);
         return new ExchangeConfig(persistence, observation, 1024, 0, 1024, 1024, 1024, 4194304);
+    }
+
+    private static Path nativeDirectory(Path legacyDirectory)
+    {
+        try
+        {
+            return PersistenceSettings.storeDirectory(legacyDirectory);
+        }
+        catch (IOException error)
+        {
+            throw new UncheckedIOException(error);
+        }
     }
 
     public CompletableFuture<Void> stop()

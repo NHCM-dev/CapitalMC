@@ -9,7 +9,7 @@
 需要 Java 25；支持 Windows amd64 和 Linux amd64（glibc 2.38+）。后台不需要 Minecraft 或 Fabric。
 
 ```text
-java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.4.0-SNAPSHOT-exchange-server.jar ./capitalmc
+java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.5.0-SNAPSHOT-exchange-server.jar ./capitalmc
 ```
 
 首次启动生成 `capitalmc/connection.json` 和随机密钥 `token`，默认监听 `127.0.0.1:25570`。独立后台始终在 LOCAL 模式监听。按 Ctrl+C 停止后修改配置。密钥只交给受信任的 Minecraft 服务器；连接方可以调用交易所管理接口，玩家客户端不应直接连接。
@@ -66,10 +66,12 @@ java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.4.0-SNAPSHOT-exchange-s
 
 ## 已有数据迁移与备份
 
-迁移已有 LOCAL 交易所时，先停止所有服务器并备份。将原有**完整** `capitalmc` 目录复制到独立后台，保留原生和账户 ID 的对应关系，包括 `users.dat`（或旧 `users.json`）、`exchange/`、`exchange.id`，以及所有元数据文件和相邻 `.wal`。后台首次创建 `shared-services.json` 时会从 `services.json` 导入全局配置。
+迁移已有 LOCAL 交易所时，停止所有服务器并备份完整 `capitalmc` 目录及世界。将整个目录复制到独立后台，包含位置文件、快照清单、快照、WAL、归档和 `exchange.id`。后台保留原生/账户 ID，并通过现有服务导入共享配置。
 
-原 Minecraft 服务器切换 REMOTE 前，将它的 `users.dat` / `users.json` 和 `exchange/` 移至活动目录之外归档。该服原来的 `services.json` **及** `services.json.wal` 必须保留，它们包含本服实物托管与恢复证据。REMOTE 发现仍有本地账户注册表或交易所目录时会拒绝启动，避免将旧 ID 误接到其他账本。若有未核对的实物操作，应先完成核对再开放充值提款。
+原 Minecraft 服切换 REMOTE 前，将本地账户注册表和原生交易所存储归档到活动目录之外，同时移走其 `users.store-path` / `exchange.store-path` 位置文件，以及仍存在的旧 `users.dat`、`users.json`、`exchange/`。**保留该服的 services 存储及位置文件**，包含全部快照和 WAL，里面有本服托管和恢复证据；旧 `services.json` 与 `services.json.wal` 在验证迁移前也须一起保留。未核对的实物操作先完成核对，再开放充值提款。REMOTE 检测到活动的 LOCAL 账户注册表或账本时会拒绝启动。
 
-备份应在停服后覆盖后台完整目录，以及每个 Minecraft 实例的世界和完整 `capitalmc` 目录。原生 WAL、共享配置、账户文件、本地操作日志、Minecraft 世界保存是不同持久化边界，不能保证跨存储原子性。全局管理操作使用独占配置租约和比较更新；中断的配置操作可能需要管理员核对。
+停服时完整备份后台和各网关；世界存盘和交易所 WAL 是不同持久化边界。被中断的托管或配置操作可能需要管理员核对。
 
-Minecraft 产物为 `build/libs/CapitalMC-0.4.0-SNAPSHOT.jar`，独立后台为 `build/libs/CapitalMC-0.4.0-SNAPSHOT-exchange-server.jar`。`./gradlew.bat build` 同时构建两者。
+[持久化、迁移和备份](persistence.zh-CN.md)
+
+Minecraft 产物为 `build/libs/CapitalMC-0.5.0-SNAPSHOT.jar`，独立后台为 `build/libs/CapitalMC-0.5.0-SNAPSHOT-exchange-server.jar`。`./gradlew.bat build` 同时构建两者。

@@ -2,6 +2,7 @@ package nhcm.capitalmc.management;
 
 import com.google.gson.*;
 import nhcm.capitalmc.account.ServerUser;
+import nhcm.capitalmc.service.PersistenceSettings;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -47,7 +48,7 @@ class UserStorageTest
         assertTrue(migrated.verifyPassword("secret"));
         assertEquals("Creator", migrated.getProfile().orElseThrow().get("name").getAsString());
         assertEquals(original, Files.readString(legacy));
-        assertTrue(Files.exists(directory.resolve("users.dat")));
+        assertTrue(Files.exists(PersistenceSettings.storeDirectory(directory.resolve("users.dat")).resolve("journal.wal")));
         Files.writeString(legacy, "not JSON");
         assertEquals(user.getUuid(), new ServerUserManager(legacy).findByUsername("legacy").orElseThrow().getUuid());
     }
@@ -58,15 +59,29 @@ class UserStorageTest
         Path file = directory.resolve("users.dat");
         var user = new ServerUser("One", "one", "", UUID.randomUUID(), UUID.randomUUID());
         UserStorage.write(file, List.of(user));
-        byte[] valid = Files.readAllBytes(file);
+        Path stored = PersistenceSettings.storeDirectory(file).resolve("snapshot.head");
+        byte[] valid = Files.readAllBytes(stored);
         byte[] corrupt = valid.clone();
         corrupt[corrupt.length - 1] ^= 1;
-        Files.write(file, corrupt);
+        Files.write(stored, corrupt);
         assertThrows(IOException.class, () -> UserStorage.read(file));
         Files.writeString(directory.resolve("users.json"), "{\"version\":1,\"users\":[]}");
         assertThrows(UncheckedIOException.class, () -> new ServerUserManager(file));
-        Files.write(file, Arrays.copyOf(valid, valid.length - 1));
+        Files.write(stored, Arrays.copyOf(valid, valid.length - 1));
         assertThrows(IOException.class, () -> UserStorage.read(file));
+    }
+
+    @Test
+    void missingAccountManifestAndWalCannotResetTheRegistry() throws Exception
+    {
+        Path file = directory.resolve("users.dat");
+        var user = new ServerUser("One", "one", "", UUID.randomUUID(), UUID.randomUUID());
+        UserStorage.write(file, List.of(user));
+        Path stored = PersistenceSettings.storeDirectory(file);
+        Files.delete(stored.resolve("snapshot.head"));
+        Files.delete(stored.resolve("journal.wal"));
+        Files.writeString(directory.resolve("users.json"), "{\"version\":1,\"users\":[]}");
+        assertThrows(UncheckedIOException.class, () -> new ServerUserManager(file));
     }
 
     @Test

@@ -4,8 +4,6 @@ import com.google.gson.*;
 import nhcm.capitalmc.backend.SharedMetadata;
 
 import java.io.*;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
@@ -19,11 +17,10 @@ import java.util.zip.CRC32;
  */
 public class ServiceState
 {
-    private static final Gson JSON = new Gson();
     private final Path file, journal;
+    private final BinaryStateStore binary;
     private volatile JsonObject data;
     private volatile long sequence;
-    private int sinceCheckpoint;
     private boolean faulted;
     private volatile SharedMetadata shared;
     private JsonObject durableData;
@@ -64,7 +61,7 @@ public class ServiceState
 
     private synchronized boolean publishShared(JsonObject image)
     {
-        if (SharedMetadata.select(data).equals(image)) return false;
+        if (BinaryValues.sameValues(SharedMetadata.select(data), image)) return false;
         var next = data.deepCopy();
         overlay(next, image);
         data = next;
@@ -87,11 +84,19 @@ public class ServiceState
         journal = this.file.resolveSibling(this.file.getFileName() + ".wal");
         try
         {
-            data = Files.exists(this.file) ? JsonParser.parseString(Files.readString(this.file)).getAsJsonObject() : new JsonObject();
-            sequence = data.has("_stateSequence") ? data.remove("_stateSequence").getAsLong() : 0;
-            recover();
+            binary = new BinaryStateStore(PersistenceSettings.storeDirectory(this.file), PersistenceSettings.load(this.file.getParent()).metadataOptions());
+            if (!binary.initialized() && (Files.exists(this.file) || Files.exists(journal)))
+            {
+                data = Files.exists(this.file) ? JsonParser.parseString(Files.readString(this.file)).getAsJsonObject() : new JsonObject();
+                sequence = data.has("_stateSequence") ? data.remove("_stateSequence").getAsLong() : 0;
+                recover(); // Read-only legacy import, including its adjacent WAL.
+                binary.importState(data, sequence);
+            }
+            data = binary.snapshot();
+            sequence = binary.sequence();
             durableData = data;
-        } catch (IOException error)
+        }
+        catch (IOException error)
         {
             throw new UncheckedIOException(error);
         }
@@ -372,7 +377,7 @@ public class ServiceState
         {
             var before = SharedMetadata.select(data);
             var after = SharedMetadata.select(next);
-            if (!before.equals(after))
+            if (!BinaryValues.sameValues(before, after))
             {
                 overlay(next, shared.commit(before, after).join());
                 sharedGeneration++;
@@ -384,42 +389,14 @@ public class ServiceState
         {
             return;
         }
-        long nextSequence = Math.addExact(sequence, 1);
-        JsonObject payload = new JsonObject();
-        payload.addProperty("sequence", nextSequence);
-        payload.add("changes", changes);
-        String body = JSON.toJson(payload);
-        JsonObject record = new JsonObject();
-        record.addProperty("payload", body);
-        record.addProperty("crc", checksum(body));
-        byte[] bytes = (JSON.toJson(record) + "\n").getBytes(StandardCharsets.UTF_8);
         try
         {
-            Files.createDirectories(file.getParent());
-            if (Files.exists(file) && !Files.isRegularFile(file))
-            {
-                throw new IOException("Metadata checkpoint is not a regular file");
-            }
-            if (!Files.exists(file))
-            {
-                checkpoint();
-            }
-            try (var channel = FileChannel.open(journal, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND))
-            {
-                ByteBuffer buffer = ByteBuffer.wrap(bytes);
-                while (buffer.hasRemaining())
-                    channel.write(buffer);
-                channel.force(true);
-            }
+            binary.commit(next, changes);
             data = next;
             durableData = next;
-            sequence = nextSequence;
-            sinceCheckpoint++;
-            if (sinceCheckpoint >= 128 || Files.size(journal) >= 4 * 1024 * 1024)
-            {
-                checkpoint();
-            }
-        } catch (IOException error)
+            sequence = binary.sequence();
+        }
+        catch (IOException error)
         {
             faulted = true;
             throw new UncheckedIOException("Metadata write result may be uncertain; further writes blocked", error);
@@ -444,14 +421,6 @@ public class ServiceState
         while (end > 0 && bytes[end - 1] != '\n')
             end--;
         // Only a physically incomplete final record is discarded. Complete corrupt records fail startup.
-        if (end != bytes.length)
-        {
-            try (var channel = FileChannel.open(journal, StandardOpenOption.WRITE))
-            {
-                channel.truncate(end);
-                channel.force(true);
-            }
-        }
         try (var reader = new BufferedReader(new StringReader(new String(bytes, 0, end, StandardCharsets.UTF_8))))
         {
             for (String line; (line = reader.readLine()) != null; )
@@ -475,39 +444,7 @@ public class ServiceState
                 for (JsonElement change : payload.getAsJsonArray("changes"))
                     apply(data, change.getAsJsonObject());
                 sequence = id;
-                sinceCheckpoint++;
             }
-        }
-    }
-
-    private synchronized void checkpoint() throws IOException
-    {
-        JsonObject saved = (durableData == null ? data : durableData).deepCopy();
-        saved.addProperty("_stateSequence", sequence);
-        Path temporary = Files.createTempFile(file.getParent(), "capital-", ".tmp");
-        try
-        {
-            Files.writeString(temporary, JSON.toJson(saved), StandardCharsets.UTF_8);
-            try (var channel = FileChannel.open(temporary, StandardOpenOption.WRITE))
-            {
-                channel.force(true);
-            }
-            try
-            {
-                Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException ignored)
-            {
-                Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
-            }
-            try (var channel = FileChannel.open(journal, StandardOpenOption.CREATE, StandardOpenOption.WRITE))
-            {
-                channel.truncate(0);
-                channel.force(true);
-            }
-            sinceCheckpoint = 0;
-        } finally
-        {
-            Files.deleteIfExists(temporary);
         }
     }
 
@@ -520,32 +457,7 @@ public class ServiceState
 
     private static void diff(JsonElement before, JsonElement after, JsonArray path, JsonArray changes)
     {
-        if (Objects.equals(before, after))
-        {
-            return;
-        }
-        if (before != null && after != null && before.isJsonObject() && after.isJsonObject())
-        {
-            Set<String> keys = new LinkedHashSet<>(before.getAsJsonObject().keySet());
-            keys.addAll(after.getAsJsonObject().keySet());
-            for (String key : keys)
-            {
-                JsonArray child = path.deepCopy();
-                child.add(key);
-                diff(before.getAsJsonObject().get(key), after.getAsJsonObject().get(key), child, changes);
-            }
-        }
-        else
-        {
-            JsonObject change = new JsonObject();
-            change.add("path", path);
-            change.addProperty("remove", after == null);
-            if (after != null)
-            {
-                change.add("value", after.deepCopy());
-            }
-            changes.add(change);
-        }
+        BinaryStateStore.diff(before, after, path, changes);
     }
 
     private static void apply(JsonObject root, JsonObject change)

@@ -57,7 +57,8 @@ public class MultiGatewayLoad
         Path directory = args.length > 3 ? Path.of(args[3]).toAbsolutePath() : Files.createTempDirectory("capitalmc-load-");
         require(users >= 2 && users <= 5000 && seconds >= 5 && rate >= 1, "Invalid load parameters");
         Files.createDirectories(directory);
-        require(!Files.exists(directory.resolve("exchange")), "Use a fresh directory; load tests never reset existing ledgers");
+        require(!Files.exists(directory.resolve("exchange")) && !Files.exists(directory.resolve("exchange.store-path")),
+                "Use a fresh directory; load tests never reset existing ledgers");
         int gatewayCount = Math.min(50, Math.max(2, (users + 99) / 100));
         var report = new LinkedHashMap<String, Object>();
         report.put("users", users);
@@ -209,6 +210,7 @@ public class MultiGatewayLoad
                 for (var gateway : resources) gateway.close();
             }
         }
+        long recoveryBeginning = System.nanoTime();
         try (var recovered = new Exchange(ExchangeRuntime.nativeConfig(directory.resolve("exchange"))))
         {
             var audit = recovered.audit().report(64).join();
@@ -230,7 +232,17 @@ public class MultiGatewayLoad
             require(recoveredCommands == expectedCommands, "Recovery lost command journal entries");
             report.put("recoveredCommands", recoveredCommands);
             report.put("recoveryStateHashMatches", true);
+            report.put("recoveryIncludingMetadataMillis", (System.nanoTime() - recoveryBeginning) / 1_000_000.0);
             report.put("recoveryAudit", audit);
+        }
+        Path nativeStore = directory.resolve(Files.readString(directory.resolve("exchange.store-path")).strip());
+        try (var segments = Files.list(nativeStore.resolve("archive")))
+        {
+            report.put("nativeArchivedSegments", segments.count());
+        }
+        try (var snapshots = Files.list(nativeStore.resolve("snapshots")))
+        {
+            report.put("nativeRetainedSnapshots", snapshots.count());
         }
         Files.writeString(directory.resolve("report.json"), new GsonBuilder().setPrettyPrinting().create().toJson(report));
         System.out.println("MULTI_GATEWAY_REPORT " + new GsonBuilder().create().toJson(report));

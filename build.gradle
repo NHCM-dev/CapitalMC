@@ -39,9 +39,9 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
-    implementation 'nhcm:advmatch:1.4.0'
+    implementation 'nhcm:advmatch:2.0.0'
     implementation 'com.google.code.gson:gson:2.13.2'
-    include 'nhcm:advmatch:1.4.0'
+    include 'nhcm:advmatch:2.0.0'
 
     compileOnly("org.projectlombok:lombok:1.18.48")
     annotationProcessor("org.projectlombok:lombok:1.18.48")
@@ -61,6 +61,9 @@ tasks.register('exchangeServerJar', Jar) {
         include 'nhcm/capitalmc/management/UserStorage*'
         include 'nhcm/capitalmc/service/ApplicationExecutors*'
         include 'nhcm/capitalmc/service/ServiceState*'
+        include 'nhcm/capitalmc/service/BinaryStateStore*'
+        include 'nhcm/capitalmc/service/BinaryValues*'
+        include 'nhcm/capitalmc/service/PersistenceSettings*'
         include 'capitalmc-build.properties'
     }
     from({ configurations.runtimeClasspath.findAll { it.name.startsWith('advmatch-') || it.name.startsWith('gson-') }.collect { zipTree(it) } }) {

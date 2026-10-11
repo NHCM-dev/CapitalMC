@@ -664,7 +664,7 @@ public class ServerUserManager
 
     private void load()
     {
-        if (Files.exists(storageFile))
+        if (UserStorage.exists(storageFile))
         {
             try
             {

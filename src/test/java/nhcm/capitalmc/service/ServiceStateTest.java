@@ -22,9 +22,10 @@ class ServiceStateTest
         Path file = directory.resolve("group-fault.json");
         var state = new ServiceState(file);
         state.update(root -> root.addProperty("value", 1));
-        Files.delete(file);
-        Files.createDirectory(file);
-        Files.writeString(file.resolve("keep"), "Evidence");
+        Path broken = PersistenceSettings.storeDirectory(file).resolve("journal.wal");
+        Files.delete(broken);
+        Files.createDirectory(broken);
+        Files.writeString(broken.resolve("keep"), "Evidence");
         var writes = new ArrayList<CompletableFuture<Void>>();
         for (int index = 0; index < 10; index++)
         {
@@ -99,7 +100,9 @@ class ServiceStateTest
     {
         Path file = directory.resolve("state.json");
         var state = new ServiceState(file);
+        state.update(root -> root.addProperty("request", 4_000_000_000_000_000_000L));
         long first = state.nextRequest();
+        assertEquals(4_000_000_000_000_000_001L, first);
         var snapshot = state.snapshot();
         snapshot.addProperty("request", 0);
         assertEquals(first + 1, new ServiceState(file).nextRequest());
@@ -124,9 +127,10 @@ class ServiceStateTest
         Path path = directory.resolve("state.json");
         var state = new ServiceState(path);
         state.update(root -> root.addProperty("value", 3));
-        Files.delete(path);
-        Files.createDirectory(path);
-        Files.writeString(path.resolve("keep"), "x");
+        Path broken = PersistenceSettings.storeDirectory(path).resolve("journal.wal");
+        Files.delete(broken);
+        Files.createDirectory(broken);
+        Files.writeString(broken.resolve("keep"), "x");
         assertThrows(UncheckedIOException.class, () -> state.update(root -> root.addProperty("value", 4)));
         assertEquals(3, state.snapshot().get("value").getAsInt());
     }
@@ -141,16 +145,34 @@ class ServiceStateTest
         state.updateAsync(root -> root.addProperty("request", 120)).join();
         assertEquals(3, new ServiceState(file).snapshot().getAsJsonObject("containerCredits").get("owner:CHEST").getAsInt());
         assertEquals(120, new ServiceState(file).snapshot().get("request").getAsLong());
-        assertEquals(2, JsonParser.parseString(Files.readString(file)).getAsJsonObject().getAsJsonObject("containerCredits").get("owner:CHEST").getAsInt());
+        assertEquals("{\"containerCredits\":{\"owner:CHEST\":2}}", Files.readString(file));
+    }
+
+    @Test
+    void legacySnapshotAndAdjacentWalMigrateTogetherWithoutChangingEvidence() throws Exception
+    {
+        Path file = directory.resolve("legacy-wal.json");
+        Path wal = directory.resolve("legacy-wal.json.wal");
+        Files.writeString(file, "{\"_stateSequence\":4,\"value\":1}");
+        String body = "{\"sequence\":5,\"changes\":[{\"path\":[\"value\"],\"remove\":false,\"value\":2}]}";
+        var crc = new java.util.zip.CRC32(); crc.update(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        var record = new JsonObject(); record.addProperty("payload", body); record.addProperty("crc", crc.getValue());
+        String original = record + "\n{incomplete";
+        Files.writeString(wal, original);
+        var migrated = new ServiceState(file);
+        assertEquals(5, migrated.revision()); assertEquals(2, migrated.snapshot().get("value").getAsInt());
+        assertEquals(original, Files.readString(wal));
+        Files.writeString(file, "bad legacy input"); Files.writeString(wal, "bad legacy journal");
+        assertEquals(2, new ServiceState(file).snapshot().get("value").getAsInt());
     }
 
     @Test
     void incompleteTailIsTruncatedBeforeAppendingNewRecords() throws Exception
     {
-        Path file = directory.resolve("state.json"), wal = directory.resolve("state.json.wal");
+        Path file = directory.resolve("state.json"), wal = PersistenceSettings.storeDirectory(file).resolve("journal.wal");
         var state = new ServiceState(file);
         state.update(root -> root.addProperty("value", 8));
-        Files.writeString(wal, "{broken", StandardOpenOption.APPEND);
+        Files.write(wal, new byte[]{1, 2, 3}, StandardOpenOption.APPEND);
         var recovered = new ServiceState(file);
         assertEquals(8, recovered.snapshot().get("value").getAsInt());
         recovered.update(root -> root.addProperty("value", 9));
@@ -160,28 +182,29 @@ class ServiceStateTest
     @Test
     void completeCorruptRecordFailsRecoveryInsteadOfSilentlyLosingState() throws Exception
     {
-        Path file = directory.resolve("state.json"), wal = directory.resolve("state.json.wal");
+        Path file = directory.resolve("state.json"), wal = PersistenceSettings.storeDirectory(file).resolve("journal.wal");
         var state = new ServiceState(file);
         state.update(root -> root.addProperty("value", 8));
-        String record = Files.readString(wal);
-        Files.writeString(wal, record.replace("value", "other"));
-        assertThrows(IllegalStateException.class, () -> new ServiceState(file));
+        byte[] record = Files.readAllBytes(wal);
+        record[record.length - 1] ^= 1;
+        Files.write(wal, record);
+        assertThrows(UncheckedIOException.class, () -> new ServiceState(file));
     }
 
     @Test
     void checkpointSkipsAnOldJournalThatSurvivedRename() throws Exception
     {
-        Path file = directory.resolve("state.json"), wal = directory.resolve("state.json.wal");
+        Path file = directory.resolve("state.json"), wal = PersistenceSettings.storeDirectory(file).resolve("journal.wal");
         var state = new ServiceState(file);
         state.update(root -> root.addProperty("value", 1));
-        String old = Files.readString(wal);
+        byte[] old = Files.readAllBytes(wal);
         for (int value = 2; value <= 128; value++)
         {
             int next = value;
             state.update(root -> root.addProperty("value", next));
         }
         assertEquals(0, Files.size(wal));
-        Files.writeString(wal, old);
+        Files.write(wal, old);
         var recovered = new ServiceState(file);
         assertEquals(128, recovered.snapshot().get("value").getAsInt());
         recovered.update(root -> root.addProperty("value", 129));

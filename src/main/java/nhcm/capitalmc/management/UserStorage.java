@@ -2,10 +2,11 @@ package nhcm.capitalmc.management;
 
 import com.google.gson.*;
 import nhcm.capitalmc.account.ServerUser;
+import nhcm.capitalmc.service.BinaryStateStore;
+import nhcm.capitalmc.service.PersistenceSettings;
 
 import java.io.*;
 import java.math.BigDecimal;
-import java.nio.channels.FileChannel;
 import java.nio.file.*;
 import java.util.*;
 import java.util.zip.CRC32C;
@@ -15,9 +16,124 @@ import java.util.zip.CRC32C;
  */
 class UserStorage
 {
-    private static final int MAGIC = 0x434d4355, VERSION = 1, LIMIT = 64 * 1024 * 1024;
+    private static final Map<Path, BinaryStateStore> stores = new WeakHashMap<>();
+
+    static boolean exists(Path file)
+    {
+        if (Files.exists(file))
+        {
+            return true;
+        }
+        Path pin = file.resolveSibling(file.getFileName().toString().replaceFirst("\\.dat$", "") + ".store-path");
+        if (!Files.exists(pin))
+        {
+            return false;
+        }
+        try
+        {
+            Path directory = file.getParent().resolve(Files.readString(pin).strip()).normalize();
+            if (Files.exists(directory.resolve("snapshot.head")) || Files.exists(directory.resolve("journal.wal")))
+            {
+                return true;
+            }
+            Path snapshots = directory.resolve("snapshots");
+            if (Files.isDirectory(snapshots))
+            {
+                try (var files = Files.list(snapshots))
+                {
+                    return files.anyMatch(path -> path.getFileName().toString().endsWith(".bin"));
+                }
+            }
+            return false;
+        }
+        catch (IOException error)
+        {
+            throw new UncheckedIOException(error);
+        }
+    }
 
     static List<ServerUser> read(Path file) throws IOException
+    {
+        var store = open(file);
+        synchronized (stores)
+        {
+            stores.put(file, store);
+        }
+        var result = new ArrayList<ServerUser>();
+        for (var entry : store.snapshot().entrySet())
+        {
+            var record = entry.getValue().getAsJsonObject();
+            var user = ServerUser.restore(record.get("display").getAsString(), record.get("username").getAsString(),
+                                          record.get("passwordHash").getAsString(), UUID.fromString(entry.getKey()),
+                                          UUID.fromString(record.get("owner").getAsString()));
+            long exchange = record.get("exchange").getAsLong();
+            if (exchange != 0)
+            {
+                user = user.withExchangeUserId(exchange);
+            }
+            if (record.has("profile"))
+            {
+                user = user.withProfile(record.getAsJsonObject("profile"));
+            }
+            result.add(user);
+        }
+        return List.copyOf(result);
+    }
+
+    static void write(Path file, Collection<ServerUser> users) throws IOException
+    {
+        BinaryStateStore store;
+        synchronized (stores)
+        {
+            store = stores.get(file);
+            if (store == null)
+            {
+                store = open(file);
+                stores.put(file, store);
+            }
+        }
+        var next = records(users);
+        if (!store.initialized() && next.isEmpty())
+        {
+            store.importState(next, 0);
+        }
+        else
+        {
+            store.replace(next);
+        }
+    }
+
+    private static BinaryStateStore open(Path file) throws IOException
+    {
+        var options = PersistenceSettings.load(file.getParent()).metadataOptions();
+        var store = new BinaryStateStore(PersistenceSettings.storeDirectory(file), options);
+        if (!store.initialized() && Files.exists(file))
+        {
+            store.importState(records(readLegacy(file)), 0);
+        }
+        return store;
+    }
+
+    private static JsonObject records(Collection<ServerUser> users)
+    {
+        var result = new JsonObject();
+        for (var user : users)
+        {
+            var record = new JsonObject();
+            record.addProperty("display", user.getDisplayName());
+            record.addProperty("username", user.getUsername());
+            record.addProperty("passwordHash", user.getPasswordHash());
+            record.addProperty("owner", user.getOwnerUuid().toString());
+            record.addProperty("exchange", user.getExchangeUserId());
+            user.getProfile().ifPresent(profile -> record.add("profile", profile));
+            result.add(user.getUuid().toString(), record);
+        }
+        return result;
+    }
+
+    private static final int MAGIC = 0x434d4355, VERSION = 1, LIMIT = 64 * 1024 * 1024;
+
+    static List<ServerUser> readLegacy(Path file) throws IOException
     {
         if (Files.size(file) > LIMIT + 20L)
         {
@@ -71,62 +187,9 @@ class UserStorage
         }
     }
 
-    static void write(Path file, Collection<ServerUser> users) throws IOException
-    {
-        var bytes = new ByteArrayOutputStream();
-        try (var data = new DataOutputStream(bytes))
-        {
-            data.writeInt(users.size());
-            for (var user : users.stream().sorted(Comparator.comparing(ServerUser::getUuid)).toList())
-            {
-                uuid(data, user.getUuid());
-                uuid(data, user.getOwnerUuid());
-                data.writeUTF(user.getDisplayName());
-                data.writeUTF(user.getUsername());
-                data.writeUTF(user.getPasswordHash());
-                data.writeLong(user.getExchangeUserId());
-                tree(data, user.getProfile().map(p -> (JsonElement) p).orElse(JsonNull.INSTANCE), 0);
-            }
-        }
-        byte[] payload = bytes.toByteArray();
-        if (payload.length > LIMIT)
-        {
-            throw new IOException("Account store too large");
-        }
-        var crc = new CRC32C();
-        crc.update(payload);
-        Files.createDirectories(file.getParent());
-        Path temporary = Files.createTempFile(file.getParent(), "users-", ".tmp");
-        try
-        {
-            try (var data = new DataOutputStream(Files.newOutputStream(temporary)))
-            {
-                data.writeInt(MAGIC);
-                data.writeInt(VERSION);
-                data.writeInt(payload.length);
-                data.writeLong(crc.getValue());
-                data.write(payload);
-            }
-            try (var channel = FileChannel.open(temporary, StandardOpenOption.WRITE))
-            {
-                channel.force(true);
-            }
-            Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } finally
-        {
-            Files.deleteIfExists(temporary);
-        }
-    }
-
     private static UUID uuid(DataInputStream in) throws IOException
     {
         return new UUID(in.readLong(), in.readLong());
-    }
-
-    private static void uuid(DataOutputStream out, UUID id) throws IOException
-    {
-        out.writeLong(id.getMostSignificantBits());
-        out.writeLong(id.getLeastSignificantBits());
     }
 
     private static int count(DataInputStream in) throws IOException
@@ -137,42 +200,6 @@ class UserStorage
             throw new IOException("Invalid collection length");
         }
         return count;
-    }
-
-    // Profile structure is encoded as typed binary values, never as JSON text.
-    private static void tree(DataOutputStream out, JsonElement value, int depth) throws IOException
-    {
-        if (depth > 64)
-        {
-            throw new IOException("Profile nesting limit exceeded");
-        }
-        if (value.isJsonNull())
-        {
-            out.writeByte(0);
-            return;
-        }
-        if (value.isJsonObject())
-        {
-            out.writeByte(1);
-            out.writeInt(value.getAsJsonObject().size());
-            for (var e : value.getAsJsonObject().entrySet())
-            {
-                out.writeUTF(e.getKey());
-                tree(out, e.getValue(), depth + 1);
-            }
-            return;
-        }
-        if (value.isJsonArray())
-        {
-            out.writeByte(2);
-            out.writeInt(value.getAsJsonArray().size());
-            for (var e : value.getAsJsonArray())
-                tree(out, e, depth + 1);
-            return;
-        }
-        var primitive = value.getAsJsonPrimitive();
-        out.writeByte(primitive.isBoolean() ? 3 : primitive.isNumber() ? 4 : 5);
-        out.writeUTF(primitive.getAsString());
     }
 
     private static JsonElement tree(DataInputStream in, int depth) throws IOException

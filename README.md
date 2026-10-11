@@ -22,13 +22,13 @@ Requires **Minecraft 26.3**, **Fabric Loader 0.19.5+**, **Fabric API for 26.3** 
 .\gradlew.bat build
 ```
 
-Place `build/libs/CapitalMC-0.4.0-SNAPSHOT.jar` and Fabric API in the server's `mods` folder. SGui and AdvMatch are bundled. The included AdvMatch library supports **Windows amd64 and Linux amd64 (glibc)**; other platforms need a matching native SDK build. The current Linux bundle requires glibc 2.38+; see the AdvMatch build documentation.
+Place `build/libs/CapitalMC-0.5.0-SNAPSHOT.jar` and Fabric API in the server's `mods` folder. SGui and AdvMatch are bundled. The included AdvMatch library supports **Windows amd64 and Linux amd64 (glibc)**; other platforms need a matching native SDK build. The current Linux bundle requires glibc 2.38+; see the AdvMatch build documentation.
 
 For development, run `.\gradlew.bat runServer` and accept the Minecraft EULA before starting the server. The build runs unit tests and Minecraft GameTests.
 
 ## Get started
 
-For multiple servers, follow [shared exchange setup](documentation/cross-server.en.md). The standalone owner is `CapitalMC-0.4.0-SNAPSHOT-exchange-server.jar`; Minecraft gateways use `config/capitalmc.json`.
+For multiple servers, follow [shared exchange setup](documentation/cross-server.en.md). The standalone owner is `CapitalMC-0.5.0-SNAPSHOT-exchange-server.jar`; Minecraft gateways use `config/capitalmc.json`.
 
 1. Run `/trade gui`, then register or log in to a trading account.
 2. Deposit a registered asset, select a market and choose spot or contract trading.
@@ -60,4 +60,6 @@ Open **My orders and positions** from My Account, or use the order/position butt
 
 ## Data and backups
 
-AdvMatch owns the financial ledger; CapitalMC manages Minecraft identities and physical items. Back up the world, the exchange persistence directory and the entire `capitalmc` directory together while the server is stopped. Keep `services.json` with `services.json.wal`. Uncertain deliveries require review rather than automatic retry.
+AdvMatch owns the financial ledger; CapitalMC manages Minecraft identities and physical custody. Business data uses binary WAL and state snapshots. Back up the entire `capitalmc` directory and worlds while stopped. Legacy JSON imports require the original file and its adjacent WAL. Uncertain deliveries require review.
+
+[Persistence configuration and recovery](documentation/persistence.en.md)

@@ -5,6 +5,7 @@
 /out/
 /reports/
 /release-artifacts/
+/capitalmc/
 
 # IDE configuration
 .idea/

@@ -10,6 +10,7 @@ import nhcm.advmatch.remote.ExchangeServer;
 import nhcm.capitalmc.management.ServerUserManager;
 import nhcm.capitalmc.account.ServerUser;
 import nhcm.capitalmc.service.ServiceState;
+import nhcm.capitalmc.service.BinaryValues;
 
 import java.io.IOException;
 import java.nio.channels.FileChannel;
@@ -227,11 +228,11 @@ public class BackendCoordinator implements AutoCloseable
                     shared.update(root -> {
                         for (String field : SharedMetadata.FIELDS)
                         {
-                            if (Objects.equals(expected.get(field), next.get(field)))
+                            if (BinaryValues.sameValues(expected.get(field), next.get(field)))
                             {
                                 continue;
                             }
-                            if (!Objects.equals(root.get(field), expected.get(field)))
+                            if (!BinaryValues.sameValues(root.get(field), expected.get(field)))
                             {
                                 throw new IllegalStateException("Shared metadata changed; refresh before retrying configuration");
                             }
@@ -261,7 +262,7 @@ public class BackendCoordinator implements AutoCloseable
                     for (var entry : bindings.entrySet())
                     {
                         var proof = BindingProof.asset(current, Long.parseLong(entry.getKey()));
-                        if (!proof.get("enabled").getAsBoolean() || !proof.equals(entry.getValue()))
+                        if (!proof.get("enabled").getAsBoolean() || !BinaryValues.sameValues(proof, entry.getValue()))
                         {
                             throw new IllegalStateException("ui.custody.binding_changed");
                         }
@@ -425,7 +426,7 @@ public class BackendCoordinator implements AutoCloseable
         if (sequence != metadataSequence)
         {
             var current = SharedMetadata.select(shared.snapshot());
-            if (!current.equals(metadataImage))
+            if (!BinaryValues.sameValues(current, metadataImage))
             {
                 metadataImage = current;
                 metadataRevision = UUID.randomUUID().toString();

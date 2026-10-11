@@ -9,7 +9,7 @@ Several Minecraft servers can share **one** AdvMatch ledger. Each server keeps i
 Use Java 25 on Windows amd64 or Linux amd64 with glibc 2.38+. Minecraft and Fabric are not required on the owner.
 
 ```text
-java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.4.0-SNAPSHOT-exchange-server.jar ./capitalmc
+java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.5.0-SNAPSHOT-exchange-server.jar ./capitalmc
 ```
 
 The first start creates `capitalmc/connection.json` with a random secret token. The standalone process always listens in LOCAL mode, initially at `127.0.0.1:25570`. Stop it with Ctrl+C before editing configuration. Keep the token private; connected Minecraft instances are trusted gateways with access to the exchange administration API.
@@ -66,10 +66,12 @@ The owner is a single point of availability; this is not a replication or failov
 
 ## Existing data and backups
 
-To move an existing LOCAL exchange to a standalone owner, stop all servers and back up first. Copy the **entire** original `capitalmc` directory to the owner so native IDs and account IDs stay aligned. Keep `users.dat` (or legacy `users.json`), `exchange/`, `exchange.id`, and each metadata file with its adjacent `.wal`. The owner imports global settings from `services.json` when creating `shared-services.json`.
+To move an existing LOCAL exchange, stop all servers and back up the entire `capitalmc` directory and worlds. Copy that entire directory to the owner, including store pins, manifests, snapshots, WAL, archives and `exchange.id`. The owner retains native/account IDs and imports shared application settings through the existing services.
 
-Archive the original gateway's `users.dat` / `users.json` and `exchange/` outside its active `capitalmc` directory before enabling REMOTE. Preserve its original `services.json` **and** `services.json.wal` on that gateway: they contain local custody and recovery evidence. REMOTE refuses an active local account registry or engine directory instead of silently mapping its IDs to another ledger. A migration involving unresolved physical operations needs reconciliation before reopening deposits/withdrawals.
+Before switching the original gateway to REMOTE, archive its account registry and native exchange store outside the active directory, including their `users.store-path` / `exchange.store-path` pins and legacy `users.dat`, `users.json`, `exchange/` if present. **Keep the gateway's services store and its pin**, including all snapshots and WAL: they contain local custody and recovery evidence. Preserve old `services.json` with `services.json.wal` until migration has been verified. Reconcile unresolved physical operations before reopening deposits or withdrawals. REMOTE refuses an active LOCAL account registry or ledger.
 
-Back up the stopped owner's complete directory and every gateway's worlds plus complete `capitalmc` directory. Native WAL, shared metadata, account files, local application journals and Minecraft saves are separate durability boundaries; a network connection does not make them atomic. Global configuration uses an exclusive lease and compare-and-set metadata updates. Interrupted configuration can require administrator review.
+Back up the stopped owner and each gateway in full. World saves and exchange WAL are separate durability boundaries. Interrupted custody or configuration operations may require administrator reconciliation.
 
-Build outputs are `build/libs/CapitalMC-0.4.0-SNAPSHOT.jar` for Minecraft and `build/libs/CapitalMC-0.4.0-SNAPSHOT-exchange-server.jar` for the owner. `./gradlew.bat build` builds both.
+[Persistence, migration and backups](persistence.en.md)
+
+Build outputs are `build/libs/CapitalMC-0.5.0-SNAPSHOT.jar` for Minecraft and `build/libs/CapitalMC-0.5.0-SNAPSHOT-exchange-server.jar` for the owner. `./gradlew.bat build` builds both.
