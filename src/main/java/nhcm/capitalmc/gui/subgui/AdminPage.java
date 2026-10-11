@@ -11,6 +11,8 @@ import nhcm.advmatch.command.read.ReadTrades;
 import nhcm.advmatch.command.read.ReadUser;
 import nhcm.advmatch.model.*;
 import nhcm.capitalmc.CapitalMC;
+import nhcm.capitalmc.backend.BackendClient;
+import com.google.gson.JsonObject;
 import nhcm.capitalmc.exchange.*;
 import nhcm.capitalmc.gui.*;
 import nhcm.capitalmc.service.*;
@@ -63,7 +65,7 @@ public class AdminPage extends BaseSubGui
     private static final List<String> JOURNALS = List.of("itemOperations", "pegOperations", "crossTransfers", "commands", "adminOperations");
     private final PollingValue<ServiceState.Entries> journal = new PollingValue<>(null);
 
-    private record Status(PersistenceStatus persistence, TradingStatusView trading)
+    private record Status(PersistenceStatus persistence, TradingStatusView trading, JsonObject metrics)
     {
     }
 
@@ -484,10 +486,26 @@ public class AdminPage extends BaseSubGui
         else
         {
             count = 0;
-            var data = status.get("status", () -> CapitalMC.exchange.submit(new ReadPersistenceStatus()).thenCombine(CapitalMC.exchange.trading().status(), Status::new));
+            var data = status.get("status", 1000, () -> CapitalMC.exchange.submit(new ReadPersistenceStatus())
+                    .thenCombine(CapitalMC.exchange.trading().status(), (persistence, trading) -> new Status(persistence, trading, null))
+                    .thenCombine(CapitalMC.runtime.backend.call(BackendClient.INFO, new JsonObject()),
+                                 (current, info) -> new Status(current.persistence(), current.trading(), info.getAsJsonObject().getAsJsonObject("metrics"))));
             String text = data == null ? GuiWidgets.text(gui, status.error() == null ? "ui.loading" : "ui.query_failed")
                     : GuiWidgets.text(gui, "ui.admin.status_details", GuiWidgets.text(gui, "ui.boolean." + data.persistence.enabled()), GuiWidgets.text(gui, "ui.boolean." + data.persistence.faulted()),
                                       data.persistence.sequence(), data.persistence.durableThrough(), GuiWidgets.text(gui, "ui.boolean." + data.trading.exchangeHalted()), data.trading.exchangeReason());
+            if (data != null && data.metrics() != null)
+            {
+                var subscriptions = data.metrics().getAsJsonObject("subscriptions");
+                var gateway = data.metrics().getAsJsonObject("gateway");
+                text += "\n" + GuiWidgets.text(gui, "ui.admin.performance_subscriptions", subscriptions.get("activeQueries").getAsInt(),
+                                                subscriptions.get("failedBatches").getAsLong(), subscriptions.get("deferredTicks").getAsLong());
+                if (gateway != null)
+                {
+                    text += "\n" + GuiWidgets.text(gui, "ui.admin.performance_gateway", gateway.get("connections").getAsInt(),
+                                                    gateway.get("queuedCommands").getAsInt(), gateway.get("runningCommands").getAsInt(),
+                                                    gateway.get("rejectedCommands").getAsLong(), gateway.get("coalescedUpdates").getAsLong());
+                }
+            }
             gui.setSlot(22, TradingGui.icon(gui.getPlayer(), Items.COMPASS, "ui.admin.status", text));
             button(gui, 24, Items.CHEST, "ui.admin.checkpoint", "checkpoint", "", "ui.admin.enter_continue");
             String result = auditing ? GuiWidgets.text(gui, "ui.loading") : audit == null ? "" : GuiWidgets.text(gui, "ui.admin.audit_details", GuiWidgets.text(gui, "ui.boolean." + audit.conserved()), GuiWidgets.text(gui, "ui.boolean." + audit.consistent()), audit.checkedAccounts(), audit.checkedOrders(), audit.checkedPositions(), audit.issueCount());

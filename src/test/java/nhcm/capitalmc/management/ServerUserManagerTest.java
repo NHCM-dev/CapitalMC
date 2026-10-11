@@ -2,6 +2,7 @@ package nhcm.capitalmc.management;
 
 import com.google.gson.JsonObject;
 import nhcm.capitalmc.account.ServerUser;
+import nhcm.capitalmc.service.ApplicationExecutors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -14,6 +15,79 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ServerUserManagerTest
 {
+    @Test
+    void metadataOverloadRetainsTheCreatedNativeUserAndDoesNotStrandBinding() throws Exception
+    {
+        var manager = new ServerUserManager(directory.resolve("overloaded-users.json"));
+        var user = manager.register("Trader", "trader", "", UUID.randomUUID());
+        var created = new CompletableFuture<Long>();
+        var started = new CountDownLatch(1);
+        var creations = new AtomicLong();
+        var binding = manager.connectExchangeUsers(new ServerUserManager.ExchangeUsers()
+        {
+            public CompletableFuture<Long> create()
+            {
+                creations.incrementAndGet();
+                started.countDown();
+                return created;
+            }
+
+            public CompletableFuture<Void> validate(long id)
+            {
+                assertEquals(123, id);
+                return CompletableFuture.completedFuture(null);
+            }
+        });
+        assertTrue(started.await(5, TimeUnit.SECONDS));
+        var occupied = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        ApplicationExecutors.IO.execute(() -> {
+            occupied.countDown();
+            try
+            {
+                release.await();
+            }
+            catch (InterruptedException failure)
+            {
+                Thread.currentThread().interrupt();
+            }
+        });
+        assertTrue(occupied.await(5, TimeUnit.SECONDS));
+        try
+        {
+            var executor = (ThreadPoolExecutor) ApplicationExecutors.IO;
+            while (executor.getQueue().remainingCapacity() > 0) executor.execute(() -> {});
+            created.complete(123L);
+            assertThrows(ExecutionException.class, () -> binding.get(5, TimeUnit.SECONDS));
+        }
+        finally
+        {
+            release.countDown();
+        }
+        while (((ThreadPoolExecutor) ApplicationExecutors.IO).getQueue().remainingCapacity() == 0) Thread.yield();
+        ApplicationExecutors.io(() -> null).get(5, TimeUnit.SECONDS);
+        assertEquals(123, manager.ensureExchangeUser(user.getUuid()).get(5, TimeUnit.SECONDS).getExchangeUserId());
+        assertEquals(1, creations.get());
+    }
+
+    @Test
+    void directoryIndexesPublishWithAccountsAndSurviveReload()
+    {
+        var manager = manager();
+        var owner = UUID.randomUUID();
+        var first = manager.register("First", "First", "", owner);
+        var bound = manager.ensureExchangeUser(first.getUuid()).join();
+        assertEquals(bound, manager.findByUsername("FIRST").orElseThrow());
+        assertEquals(bound, manager.findByExchangeId(bound.getExchangeUserId()).orElseThrow());
+        assertEquals(List.of(bound), manager.getOwnedAccounts(owner));
+        var before = manager.getUsers();
+        manager.register("Second", "second", "", UUID.randomUUID());
+        assertEquals(1, before.size());
+        var restored = new ServerUserManager(directory.resolve("users.json"));
+        assertEquals(bound.getUuid(), restored.findByExchangeId(bound.getExchangeUserId()).orElseThrow().getUuid());
+        assertEquals(2, restored.getUsers().size());
+    }
+
     @TempDir
     Path directory;
 

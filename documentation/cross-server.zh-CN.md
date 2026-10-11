@@ -9,7 +9,7 @@
 需要 Java 25；支持 Windows amd64 和 Linux amd64（glibc 2.38+）。后台不需要 Minecraft 或 Fabric。
 
 ```text
-java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.3.0-SNAPSHOT-exchange-server.jar ./capitalmc
+java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.4.0-SNAPSHOT-exchange-server.jar ./capitalmc
 ```
 
 首次启动生成 `capitalmc/connection.json` 和随机密钥 `token`，默认监听 `127.0.0.1:25570`。独立后台始终在 LOCAL 模式监听。按 Ctrl+C 停止后修改配置。密钥只交给受信任的 Minecraft 服务器；连接方可以调用交易所管理接口，玩家客户端不应直接连接。
@@ -56,7 +56,7 @@ java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.3.0-SNAPSHOT-exchange-s
 
 ## 数据更新与断线
 
-账户余额列表、交易对列表、盘口和保留的成交统计使用共享订阅：相同查询共用后台数据源，连续更新合并，闲置订阅会释放。界面普通刷新间隔为 250 毫秒；充值提款等操作前的余额检查仍使用即时查询。数据超过订阅快照上限时，完整列表继续使用游标分页。
+账户余额、交易对列表、盘口、当前订单、持仓和有效止盈止损使用共享订阅：相同查询共用后台数据源，批量版本检查避免重复生成未变化的快照。可见数据每 250 毫秒检查，变化时重绘界面；历史每五秒刷新。充值提款等操作前的余额检查仍使用即时查询。数据超过订阅快照上限时，完整列表继续使用游标分页。限制和实测负载参见[容量与运行](performance.zh-CN.md)。
 
 断线后实时数据标记为过期，恢复连接后自动恢复订阅。**下单、转账和其他修改不会自动重发。** 响应丢失可能意味着后台已经执行，应检查发起服务器的操作记录，通过现有核对功能处理。提款只在发起服务器交付实物；箱子、潜影盒额度及未完成托管也留在该实例。
 
@@ -72,4 +72,4 @@ java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.3.0-SNAPSHOT-exchange-s
 
 备份应在停服后覆盖后台完整目录，以及每个 Minecraft 实例的世界和完整 `capitalmc` 目录。原生 WAL、共享配置、账户文件、本地操作日志、Minecraft 世界保存是不同持久化边界，不能保证跨存储原子性。全局管理操作使用独占配置租约和比较更新；中断的配置操作可能需要管理员核对。
 
-Minecraft 产物为 `build/libs/CapitalMC-0.3.0-SNAPSHOT.jar`，独立后台为 `build/libs/CapitalMC-0.3.0-SNAPSHOT-exchange-server.jar`。`./gradlew.bat build` 同时构建两者。
+Minecraft 产物为 `build/libs/CapitalMC-0.4.0-SNAPSHOT.jar`，独立后台为 `build/libs/CapitalMC-0.4.0-SNAPSHOT-exchange-server.jar`。`./gradlew.bat build` 同时构建两者。

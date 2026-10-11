@@ -7,11 +7,90 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.UncheckedIOException;
 import java.nio.file.*;
+import java.util.ArrayList;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class ServiceStateTest
 {
+    @Test
+    void groupedDiskFailureDoesNotPublishOrAcknowledgeAnyEdit() throws Exception
+    {
+        Path file = directory.resolve("group-fault.json");
+        var state = new ServiceState(file);
+        state.update(root -> root.addProperty("value", 1));
+        Files.delete(file);
+        Files.createDirectory(file);
+        Files.writeString(file.resolve("keep"), "Evidence");
+        var writes = new ArrayList<CompletableFuture<Void>>();
+        for (int index = 0; index < 10; index++)
+        {
+            int id = index;
+            writes.add(state.updateEntryAsync("commands", Integer.toString(id), entry -> entry.addProperty("status", "PENDING")));
+        }
+        for (var write : writes) assertThrows(Exception.class, () -> write.get(5, TimeUnit.SECONDS));
+        assertFalse(state.snapshot().has("commands"));
+        assertEquals(1, state.snapshot().get("value").getAsInt());
+        assertTrue(state.metrics().faulted());
+        assertThrows(Exception.class, () -> state.updateAsync(root -> root.addProperty("value", 2)).get(5, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void entryGroupsAcknowledgeAfterDurabilityAndIsolateFailedEdits() throws Exception
+    {
+        var state = new ServiceState(directory.resolve("group.json"));
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        ApplicationExecutors.IO.execute(() -> {
+            entered.countDown();
+            try
+            {
+                if (!release.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("Test gate timed out");
+            }
+            catch (InterruptedException failure)
+            {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(failure);
+            }
+        });
+        assertTrue(entered.await(5, TimeUnit.SECONDS));
+        var writes = new ArrayList<CompletableFuture<Void>>();
+        CompletableFuture<Void> rejected;
+        try
+        {
+            for (int index = 0; index < 100; index++)
+            {
+                int value = index;
+                writes.add(state.updateEntryAsync("commands", Integer.toString(value), row -> row.addProperty("value", value)));
+            }
+            rejected = state.updateEntryAsync("commands", "bad", row -> {
+                row.addProperty("value", 999);
+                throw new IllegalArgumentException("Invalid edit");
+            });
+            assertTrue(writes.stream().noneMatch(CompletableFuture::isDone));
+            assertFalse(writes.getFirst().cancel(false));
+        }
+        finally
+        {
+            release.countDown();
+        }
+        CompletableFuture.allOf(writes.toArray(CompletableFuture[]::new)).get(5, TimeUnit.SECONDS);
+        assertThrows(Exception.class, () -> rejected.get(5, TimeUnit.SECONDS));
+        var recovered = new ServiceState(directory.resolve("group.json"));
+        assertEquals(100, recovered.snapshot().getAsJsonObject("commands").size());
+        assertFalse(recovered.snapshot().getAsJsonObject("commands").has("bad"));
+        assertEquals(100, state.metrics().edits());
+        assertEquals(2, state.metrics().groups());
+        var image = state.snapshot();
+        state.updateEntryAsync("commands", "1", row -> row.addProperty("value", 500)).join();
+        assertEquals(1, image.getAsJsonObject("commands").getAsJsonObject("1").get("value").getAsInt());
+        assertEquals(500, new ServiceState(directory.resolve("group.json")).snapshot().getAsJsonObject("commands")
+                                                                           .getAsJsonObject("1").get("value").getAsInt());
+    }
+
     @TempDir
     Path directory;
 

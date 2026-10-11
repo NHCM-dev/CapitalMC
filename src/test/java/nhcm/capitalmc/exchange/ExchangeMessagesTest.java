@@ -1,6 +1,7 @@
 package nhcm.capitalmc.exchange;
 
 import nhcm.advmatch.BusinessException;
+import nhcm.advmatch.NativeException;
 import nhcm.advmatch.model.*;
 import nhcm.advmatch.remote.RemoteFailure;
 import nhcm.capitalmc.i18n.I18n;
@@ -8,11 +9,23 @@ import nhcm.capitalmc.service.CurrencyService;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.RejectedExecutionException;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class ExchangeMessagesTest
 {
+    @Test
+    void boundedQueuesHaveLocalizedMessagesWithoutUnsafeRetryAdvice()
+    {
+        for (String language : new String[]{"en_us", "zh_cn"})
+        {
+            String expected = I18n.format(language, "ui.exchange.busy");
+            assertNotEquals("ui.exchange.busy", expected);
+            assertEquals(expected, ExchangeMessages.error(language, new CompletionException(new RejectedExecutionException("Private details"))));
+            assertEquals(expected, ExchangeMessages.error(language, new NativeException(NativeException.QUEUE_FULL, "Private details")));
+        }
+    }
     private static BusinessException rejected(CommandResultType type, int state)
     {
         return new BusinessException(new CommandReceipt(1, 1, false, new CommandResult(type, state, false, 0, 0,

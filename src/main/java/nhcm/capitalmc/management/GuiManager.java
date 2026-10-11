@@ -41,7 +41,7 @@ public class GuiManager
                         {
                             try
                             {
-                                gui.refresh();
+                                gui.tick();
                             } catch (RuntimeException error)
                             {
                                 CapitalMC.logger.error("Cannot refresh GUI", error);

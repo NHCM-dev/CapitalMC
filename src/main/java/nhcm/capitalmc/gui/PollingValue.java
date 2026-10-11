@@ -18,6 +18,14 @@ public class PollingValue<T>
     private boolean pending;
     private boolean loaded;
     private Throwable error;
+    private Supplier<CompletableFuture<T>> query;
+    private long intervalMillis;
+    private TradingGui owner;
+
+    public void poll()
+    {
+        if (query != null) get(key, intervalMillis, query);
+    }
 
     public PollingValue(T empty)
     {
@@ -32,6 +40,14 @@ public class PollingValue<T>
 
     public T get(Object context, long intervalMillis, Supplier<CompletableFuture<T>> query)
     {
+        var rendering = TradingGui.rendering();
+        if (rendering != null)
+        {
+            owner = rendering;
+            owner.track(this);
+        }
+        this.query = query;
+        this.intervalMillis = intervalMillis;
         if (!Objects.equals(context, key))
         {
             key = context;
@@ -55,17 +71,20 @@ public class PollingValue<T>
                         return;
                     }
                     pending = false;
+                    boolean changed = !loaded || !Objects.equals(value, result) || !Objects.equals(error, failure);
                     error = failure;
                     if (failure == null)
                     {
                         value = result;
                         loaded = true;
                     }
+                    if (changed && owner != null) owner.invalidate(this);
                 }));
             } catch (RuntimeException failure)
             {
                 pending = false;
                 error = failure;
+                if (owner != null) owner.invalidate(this);
             }
         }
         return value;

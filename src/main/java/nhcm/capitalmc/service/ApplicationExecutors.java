@@ -12,16 +12,26 @@ public class ApplicationExecutors
     {
     }
 
-    public static final ExecutorService CREDENTIALS = Executors.newFixedThreadPool(2,
-                                                                                   Thread.ofPlatform().daemon().name("capitalmc-credentials-", 0).factory());
-    public static final ExecutorService IO = Executors.newSingleThreadExecutor(
-            Thread.ofPlatform().daemon().name("capitalmc-metadata-", 0).factory());
-    public static final ExecutorService CALLBACKS = Executors.newFixedThreadPool(2,
-                                                                                 Thread.ofPlatform().daemon().name("capitalmc-exchange-", 0).factory());
+    public static final ExecutorService CREDENTIALS = bounded("capitalmc-credentials-", 2, 256);
+    public static final ExecutorService IO = bounded("capitalmc-metadata-", 1, 4096);
+    public static final ExecutorService CALLBACKS = bounded("capitalmc-exchange-", 2, 4096);
+
+    private static ExecutorService bounded(String name, int threads, int capacity)
+    {
+        return new ThreadPoolExecutor(threads, threads, 0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(capacity),
+                                      Thread.ofPlatform().daemon().name(name, 0).factory(), new ThreadPoolExecutor.AbortPolicy());
+    }
 
     public static <T> CompletableFuture<T> io(Supplier<T> work)
     {
-        return CompletableFuture.supplyAsync(work, IO);
+        try
+        {
+            return CompletableFuture.supplyAsync(work, IO);
+        }
+        catch (RejectedExecutionException failure)
+        {
+            return CompletableFuture.failedFuture(failure);
+        }
     }
 
     public static void shutdown()

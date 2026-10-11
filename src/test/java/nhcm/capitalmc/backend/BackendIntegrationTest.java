@@ -93,7 +93,8 @@ class BackendIntegrationTest
                 long idA = a.nextRequestId();
                 long idB = b.nextRequestId();
                 assertNotEquals(idA, idB);
-                assertEquals(idA + 4096, idB);
+                assertEquals(idA + (1L << 48), idB);
+                assertTrue(idA < 0, "The high bit selects namespaced native idempotency");
                 reservedThrough = idB + 4096;
 
                 try (var remote = new Exchange(channelA, ForkJoinPool.commonPool()))
@@ -103,6 +104,12 @@ class BackendIntegrationTest
                     var symbol = remote.symbols().create("B/Q", SymbolType.Spot, base, quote).join();
                     remote.books().addSpot(symbol, OrderBookImplementation.Radix).join();
                     long spot = remote.users().get(registered.getExchangeUserId()).spotAccount().join().id();
+                    var secondGateway = new UpdateBalance(spot, quote.id(), 10, idB);
+                    var firstGateway = new UpdateBalance(spot, quote.id(), 20, idA);
+                    assertFalse(remote.submit(secondGateway).join().duplicate());
+                    assertFalse(remote.submit(firstGateway).join().duplicate());
+                    assertTrue(remote.submit(secondGateway).join().duplicate());
+                    assertTrue(remote.submit(firstGateway).join().duplicate());
                     remote.submit(new UpdateBalance(spot, quote.id(), 100, a.nextRequestId())).join();
                     stateB.update(root -> {
                         var restrictions = new JsonObject();

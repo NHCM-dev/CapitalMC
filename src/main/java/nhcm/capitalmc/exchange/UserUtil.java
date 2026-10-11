@@ -19,8 +19,16 @@ public class UserUtil
     public static CompletableFuture<User> getUser(ServerUser user)
     {
         CapitalMC.serverUserManager.requireAccess(user);
+        var current = CapitalMC.serverUserManager.get(user.getUuid()).orElseThrow(() -> new IllegalStateException("cli.user.unknown"));
+        if (current.getExchangeUserId() != 0)
+        {
+            // The authoritative directory and startup binding lifecycle supply this
+            // immutable ID. A display refresh does not need another ENSURE RPC.
+            // Financial commands still pass the owner's access checks.
+            return CompletableFuture.completedFuture(QueryUtil.exchange().users().get(current.getExchangeUserId()));
+        }
         return CapitalMC.serverUserManager.ensureExchangeUser(user.getUuid())
-                                          .thenCompose(bound -> getUser(bound.getExchangeUserId()));
+                                          .thenApply(bound -> QueryUtil.exchange().users().get(bound.getExchangeUserId()));
     }
 
     public static CompletableFuture<User> getUser(long userId)

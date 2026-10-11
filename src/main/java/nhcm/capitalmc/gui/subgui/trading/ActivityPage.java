@@ -78,12 +78,13 @@ public class ActivityPage extends BaseSubGui
         }
         var data = cache.get(List.of(context, epoch, filter, cursor), () -> {
             return SymbolUtil.allSymbols().thenCompose(symbols -> {
+                var scope = ActivityScope.matching(symbols, type);
                 CompletableFuture<Data> rows = getPage() == PageType.ORDERS
                         ? ActivityScope.page(next -> TradeUtil.orderPage(user, false, 0, next), cursor,
-                                             row -> ActivityScope.matches(row, symbols, type) && !ActivityScope.terminal(row))
+                                             row -> scope.test(row) && !ActivityScope.terminal(row))
                                        .thenApply(r -> new Data(r.values(), List.of(), symbols, List.of(), r.page()))
                         : ActivityScope.page(next -> TradeUtil.positionPage(user, false, 0, next), cursor,
-                                             row -> ActivityScope.matches(row, symbols, type) && !row.closed() && row.size() > 0)
+                                             row -> scope.test(row) && !row.closed() && row.size() > 0)
                                        .thenApply(r -> new Data(List.of(), r.values(), symbols, List.of(), r.page()));
                 return rows;
             })

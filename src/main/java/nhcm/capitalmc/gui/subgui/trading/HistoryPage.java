@@ -69,15 +69,16 @@ public class HistoryPage extends BaseSubGui
         }
         GuiWidgets.activityNavigation(gui, getPage());
         var context = new Context(user, epoch, type, cursor);
-        displayed = cache.get(context, () -> SymbolUtil.allSymbols().thenCompose(symbols -> {
+        displayed = cache.get(context, 5000, () -> SymbolUtil.allSymbols().thenCompose(symbols -> {
+            var scope = ActivityScope.matching(symbols, context.type());
             CompletableFuture<? extends ReadResponse<?>> rows = switch (getPage())
             {
                 case ORDER_HISTORY -> ActivityScope.page(next -> TradeUtil.orderPage(current, true, 0, next), context.cursor(),
-                                                        row -> ActivityScope.matches(row, symbols, context.type()) && ActivityScope.terminal(row));
+                                                        row -> scope.test(row) && ActivityScope.terminal(row));
                 case POSITION_HISTORY -> ActivityScope.page(next -> TradeUtil.positionPage(current, true, 0, next), context.cursor(),
-                                                           row -> ActivityScope.matches(row, symbols, context.type()) && (row.closed() || row.size() == 0));
+                                                           row -> scope.test(row) && (row.closed() || row.size() == 0));
                 default -> ActivityScope.page(next -> TradeUtil.tradePage(current, 0, next), context.cursor(),
-                                              row -> ActivityScope.matches(row, symbols, context.type()));
+                                              scope);
             };
             return rows.thenApply(r -> new Data(r, symbols, List.of()))
                        .thenCombine(AssetUtil.allAssets(), (d, a) -> new Data(d.rows, d.symbols, a));

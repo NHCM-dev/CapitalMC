@@ -2,11 +2,13 @@ package nhcm.capitalmc.exchange;
 
 import net.minecraft.server.level.ServerPlayer;
 import nhcm.advmatch.BusinessException;
+import nhcm.advmatch.NativeException;
 import nhcm.advmatch.remote.RemoteFailure;
 import nhcm.advmatch.model.*;
 import nhcm.capitalmc.i18n.I18n;
 import nhcm.capitalmc.service.CurrencyService;
 import nhcm.capitalmc.service.GameServices;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * Presentation of native results; state codes are scoped to their command family.
@@ -45,6 +47,10 @@ public class ExchangeMessages
         if (error instanceof RemoteFailure remote)
         {
             return I18n.format(language, remote.mayHaveExecuted() ? "ui.exchange.request_uncertain" : "ui.exchange.connection_stale");
+        }
+        if (error instanceof RejectedExecutionException || error instanceof NativeException nativeError && nativeError.status() == NativeException.QUEUE_FULL)
+        {
+            return I18n.format(language, "ui.exchange.busy");
         }
         if (error instanceof CurrencyService.FundsException funds)
         {

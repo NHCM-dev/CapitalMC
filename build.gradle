@@ -39,9 +39,9 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
-    implementation 'nhcm:advmatch:1.3.0'
+    implementation 'nhcm:advmatch:1.4.0'
     implementation 'com.google.code.gson:gson:2.13.2'
-    include 'nhcm:advmatch:1.3.0'
+    include 'nhcm:advmatch:1.4.0'
 
     compileOnly("org.projectlombok:lombok:1.18.48")
     annotationProcessor("org.projectlombok:lombok:1.18.48")
@@ -69,6 +69,18 @@ tasks.register('exchangeServerJar', Jar) {
     manifest { attributes 'Main-Class': 'nhcm.capitalmc.backend.ExchangeServerMain' }
 }
 tasks.named('assemble') { dependsOn exchangeServerJar }
+
+tasks.register('multiGatewayLoad', JavaExec) {
+    group = 'verification'
+    description = 'Persistent mixed trading and private subscriptions across real TCP gateways'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'nhcm.capitalmc.backend.MultiGatewayLoad'
+    args providers.gradleProperty('loadArgs').getOrElse('1000 30 100').tokenize()
+    jvmArgs '--enable-native-access=ALL-UNNAMED', '-Xmx2g'
+    workingDir layout.buildDirectory.dir('load-runtime').get().asFile
+    doFirst { workingDir.mkdirs() }
+}
 
 test {
     useJUnitPlatform()

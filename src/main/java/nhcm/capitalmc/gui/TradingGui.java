@@ -36,6 +36,7 @@ import nhcm.capitalmc.gui.subgui.trading.TradePage;
 import nhcm.capitalmc.gui.subgui.trading.TradeSpotPage;
 import nhcm.capitalmc.gui.subgui.trading.OrderBookPage;
 import nhcm.capitalmc.i18n.I18n;
+import nhcm.capitalmc.service.GameServices;
 
 import java.time.Duration;
 import java.util.ArrayDeque;
@@ -43,6 +44,8 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.HashSet;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BooleanSupplier;
@@ -54,6 +57,43 @@ import java.util.function.Function;
  */
 public class TradingGui extends SimpleGui
 {
+    private static final ThreadLocal<TradingGui> RENDERING = new ThreadLocal<>();
+    private final Set<PollingValue<?>> polling = new HashSet<>();
+    private boolean dirty = true;
+    private long lastStateCheck, stateRevision = -1, sessionRevision = -1;
+
+    static TradingGui rendering()
+    {
+        return RENDERING.get();
+    }
+
+    void track(PollingValue<?> value)
+    {
+        polling.add(value);
+    }
+
+    void invalidate(PollingValue<?> value)
+    {
+        if (polling.contains(value)) dirty = true;
+    }
+
+    /** Server thread only: poll active dependencies without rebuilding unchanged ItemStacks. */
+    public void tick()
+    {
+        for (var value : Set.copyOf(polling)) value.poll();
+        long now = System.nanoTime();
+        if (now - lastStateCheck >= 1_000_000_000L)
+        {
+            lastStateCheck = now;
+            var services = GameServices.get();
+            long revision = services.state.revision() ^ Long.rotateLeft(services.state.sharedRevision(), 32);
+            long session = CapitalMC.serverUserManager.getSessionVersion(getPlayer().getUUID());
+            if (revision != stateRevision || session != sessionRevision || polling.isEmpty()) dirty = true;
+            stateRevision = revision;
+            sessionRevision = session;
+        }
+        if (dirty) renderPage();
+    }
     /**
      * Shared decorative filler with no visible name, tooltip, or click action.
      */
@@ -331,6 +371,8 @@ public class TradingGui extends SimpleGui
 
     private void renderPage()
     {
+        dirty = false;
+        polling.clear();
         if (requiresLogin(currentPage) && getUser().isEmpty())
         {
             resetAccountOperation();
@@ -348,6 +390,7 @@ public class TradingGui extends SimpleGui
             setTitle(title);
         }
         BaseSubGui page = pages.get(currentPage);
+        RENDERING.set(this);
         try
         {
             page.render();
@@ -389,6 +432,7 @@ public class TradingGui extends SimpleGui
         } finally
         {
             rendered = null;
+            RENDERING.remove();
         }
     }
 

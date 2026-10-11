@@ -14,7 +14,9 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -33,7 +35,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ServerUserManager
 {
     public static final int MAX_ACCOUNTS_PER_UUID = 3;
-    private volatile Map<UUID, ServerUser> usersById = Map.of();
     private volatile Predicate<ServerUser> accessAllowed = user -> true;
     private volatile AccountDirectory directory;
     private volatile long directoryGeneration;
@@ -63,7 +64,7 @@ public class ServerUserManager
         var next = new HashMap<UUID, ServerUser>();
         for (var user : users)
         {
-            var current = usersById.get(user.getUuid());
+            var current = directoryIndex.source().get(user.getUuid());
             if (current != null && AccountViews.encode(current).equals(AccountViews.encode(user)))
             {
                 user = current;
@@ -74,19 +75,19 @@ public class ServerUserManager
             }
             next.put(user.getUuid(), user);
         }
-        usersById.keySet().stream().filter(id -> !next.containsKey(id)).forEach(this::revokeSessions);
-        usersById = Map.copyOf(next);
+        directoryIndex.source().keySet().stream().filter(id -> !next.containsKey(id)).forEach(this::revokeSessions);
+        publishUsers(next);
         directoryGeneration++;
     }
 
     private synchronized ServerUser publishAccount(ServerUser user)
     {
-        var next = new HashMap<>(usersById);
+        var next = new HashMap<>(directoryIndex.source());
         var current = next.get(user.getUuid());
         if (current != null && AccountViews.encode(current).equals(AccountViews.encode(user))) return current;
         if (current != null) revokeSessions(user.getUuid());
         next.put(user.getUuid(), user);
-        usersById = Map.copyOf(next);
+        publishUsers(next);
         directoryImage = null;
         directoryGeneration++;
         return user;
@@ -173,7 +174,7 @@ public class ServerUserManager
     synchronized CompletableFuture<Void> connectExchangeUsers(ExchangeUsers access)
     {
         exchangeUsers = Objects.requireNonNull(access, "access");
-        return CompletableFuture.allOf(usersById.keySet().stream()
+        return CompletableFuture.allOf(directoryIndex.source().keySet().stream()
                                                 .map(this::ensureExchangeUser).toArray(CompletableFuture[]::new));
     }
 
@@ -211,7 +212,14 @@ public class ServerUserManager
                     : createdExchangeIds.getOrDefault(accountId, 0L);
             CompletableFuture<Long> id = knownId == 0 ? exchangeUsers.create()
                     : exchangeUsers.validate(knownId).thenApply(unused -> knownId);
-            id.whenCompleteAsync((value, error) -> {
+            id.whenComplete((value, error) -> {
+                synchronized (ServerUserManager.this)
+                {
+                    // Preserve a completed native creation even if metadata admission
+                    // is full; a later attempt must bind this ID, not create another.
+                    if (error == null && knownId == 0 && value != null && value > 0) createdExchangeIds.put(accountId, value);
+                }
+            }).whenCompleteAsync((value, error) -> {
                 synchronized (ServerUserManager.this)
                 {
                     try
@@ -229,14 +237,14 @@ public class ServerUserManager
                         ServerUser bound = current.withExchangeUserId(value);
                         if (current.getExchangeUserId() == 0)
                         {
-                            if (usersById.values().stream().anyMatch(other -> other.getExchangeUserId() == value))
+                            if (findByExchangeId(value).isPresent())
                             {
                                 throw new IllegalStateException("Exchange user is already linked to another account");
                             }
-                            Map<UUID, ServerUser> next = new HashMap<>(usersById);
+                            Map<UUID, ServerUser> next = new HashMap<>(directoryIndex.source());
                             next.put(accountId, bound);
                             persist(next);
-                            usersById = Map.copyOf(next);
+                            publishUsers(next);
                         }
                         linking.remove(accountId, result);
                         createdExchangeIds.remove(accountId);
@@ -248,7 +256,16 @@ public class ServerUserManager
                         result.completeExceptionally(failure);
                     }
                 }
-            }, ApplicationExecutors.IO);
+            }, ApplicationExecutors.IO).whenComplete((value, failure) -> {
+                if (failure != null)
+                {
+                    synchronized (ServerUserManager.this)
+                    {
+                        linking.remove(accountId, result);
+                        result.completeExceptionally(failure);
+                    }
+                }
+            });
         } catch (Throwable error)
         {
             linking.remove(accountId, result);
@@ -289,7 +306,7 @@ public class ServerUserManager
             return CompletableFuture.failedFuture(new IllegalStateException("cli.user.banned"));
         }
         return CompletableFuture.supplyAsync(() -> candidate != null && accessAllowed.test(candidate) && candidate.verifyPassword(password)
-                                                   && usersById.get(candidate.getUuid()) == candidate ? Optional.of(candidate) : Optional.empty(),
+                                                   && directoryIndex.source().get(candidate.getUuid()) == candidate ? Optional.of(candidate) : Optional.empty(),
                                              ApplicationExecutors.CREDENTIALS);
     }
 
@@ -307,7 +324,7 @@ public class ServerUserManager
                 {
                     return Optional.empty();
                 }
-                Optional<ServerUser> current = result.filter(user -> usersById.get(user.getUuid()) == user);
+                Optional<ServerUser> current = result.filter(user -> directoryIndex.source().get(user.getUuid()) == user);
                 current.ifPresent(user -> sessions.put(player, user.getUuid()));
                 return current;
             }
@@ -322,7 +339,7 @@ public class ServerUserManager
         synchronized (sessions)
         {
             requireAccess(verified);
-            if (usersById.get(verified.getUuid()) != verified)
+            if (directoryIndex.source().get(verified.getUuid()) != verified)
             {
                 throw new IllegalStateException("ui.session.changed");
             }
@@ -348,7 +365,7 @@ public class ServerUserManager
                                                  ApplicationExecutors.CREDENTIALS).thenCompose(replacement -> ApplicationExecutors.io(() -> {
                 synchronized (ServerUserManager.this)
                 {
-                    if (usersById.get(user.getUuid()) != user)
+                    if (directoryIndex.source().get(user.getUuid()) != user)
                     {
                         return false;
                     }
@@ -418,19 +435,19 @@ public class ServerUserManager
         requireLocalDirectory();
         Objects.requireNonNull(user, "user");
         validateRegistration(user.getOwnerUuid(), user.getUsername());
-        if (usersById.containsKey(user.getUuid()))
+        if (directoryIndex.source().containsKey(user.getUuid()))
         {
             throw new IllegalArgumentException("Account ID is already registered");
         }
-        if (user.getExchangeUserId() != 0 && usersById.values().stream()
+        if (user.getExchangeUserId() != 0 && directoryIndex.source().values().stream()
                                                       .anyMatch(other -> other.getExchangeUserId() == user.getExchangeUserId()))
         {
             throw new IllegalArgumentException("Exchange user is already linked to another account");
         }
-        Map<UUID, ServerUser> next = new HashMap<>(usersById);
+        Map<UUID, ServerUser> next = new HashMap<>(directoryIndex.source());
         next.put(user.getUuid(), user);
         persist(next);
-        usersById = Map.copyOf(next);
+        publishUsers(next);
         if (exchangeUsers != null)
         {
             ensureExchangeUser(user.getUuid()).whenComplete((bound, error) -> {
@@ -446,29 +463,65 @@ public class ServerUserManager
 
     public Optional<ServerUser> get(UUID accountId)
     {
-        return Optional.ofNullable(usersById.get(Objects.requireNonNull(accountId, "accountId")));
+        return Optional.ofNullable(directoryIndex.source().get(Objects.requireNonNull(accountId, "accountId")));
+    }
+
+    private record DirectoryIndex(Map<UUID, ServerUser> source, Map<String, ServerUser> usernames,
+                                  Map<Long, ServerUser> exchangeIds, Map<UUID, List<ServerUser>> owners,
+                                  List<ServerUser> users)
+    {
+    }
+
+    private volatile DirectoryIndex directoryIndex = new DirectoryIndex(Map.of(), Map.of(), Map.of(), Map.of(), List.of());
+
+    private void publishUsers(Map<UUID, ServerUser> values)
+    {
+        var source = Map.copyOf(values);
+        var usernames = new HashMap<String, ServerUser>();
+        var exchangeIds = new HashMap<Long, ServerUser>();
+        var owners = new HashMap<UUID, List<ServerUser>>();
+        for (var user : source.values())
+        {
+            if (usernames.put(normalizeUsername(user.getUsername()), user) != null)
+            {
+                throw new IllegalStateException("Duplicate account username");
+            }
+            if (user.getExchangeUserId() != 0 && exchangeIds.put(user.getExchangeUserId(), user) != null)
+            {
+                throw new IllegalStateException("Duplicate exchange identity");
+            }
+            owners.computeIfAbsent(user.getOwnerUuid(), ignored -> new ArrayList<>()).add(user);
+        }
+        owners.replaceAll((owner, accounts) -> List.copyOf(accounts));
+        directoryIndex = new DirectoryIndex(source, Map.copyOf(usernames), Map.copyOf(exchangeIds),
+                                            Map.copyOf(owners), List.copyOf(source.values()));
+    }
+
+    public Optional<ServerUser> findByExchangeId(long id)
+    {
+        return Optional.ofNullable(directoryIndex.exchangeIds().get(id));
     }
 
     public Optional<ServerUser> findByUsername(String username)
     {
         String normalized = normalizeUsername(username);
-        return usersById.values().stream().filter(user -> normalizeUsername(user.getUsername()).equals(normalized)).findFirst();
+        return Optional.ofNullable(directoryIndex.usernames().get(normalized));
     }
 
     public List<ServerUser> getOwnedAccounts(UUID ownerUuid)
     {
         Objects.requireNonNull(ownerUuid, "ownerUuid");
-        return usersById.values().stream().filter(user -> user.getOwnerUuid().equals(ownerUuid)).toList();
+        return directoryIndex.owners().getOrDefault(ownerUuid, List.of());
     }
 
     public List<ServerUser> getUsers()
     {
-        return List.copyOf(usersById.values());
+        return directoryIndex.users();
     }
 
     public int size()
     {
-        return usersById.size();
+        return directoryIndex.source().size();
     }
 
     /**
@@ -539,10 +592,10 @@ public class ServerUserManager
         {
             throw new IllegalStateException("Account is currently linking to the exchange");
         }
-        Map<UUID, ServerUser> next = new HashMap<>(usersById);
+        Map<UUID, ServerUser> next = new HashMap<>(directoryIndex.source());
         next.remove(accountId);
         persist(next);
-        usersById = Map.copyOf(next);
+        publishUsers(next);
         createdExchangeIds.remove(accountId);
         sessions.values().removeIf(accountId::equals);
         return Optional.of(user);
@@ -570,10 +623,10 @@ public class ServerUserManager
         {
             replacement = replacement.withExchangeUserId(user.getExchangeUserId());
         }
-        Map<UUID, ServerUser> next = new HashMap<>(usersById);
+        Map<UUID, ServerUser> next = new HashMap<>(directoryIndex.source());
         next.put(user.getUuid(), replacement);
         persist(next);
-        usersById = Map.copyOf(next);
+        publishUsers(next);
         synchronized (sessions)
         {
             sessions.values().removeIf(user.getUuid()::equals);
@@ -583,7 +636,7 @@ public class ServerUserManager
     private Optional<ServerUser> getSessionAccount(UUID playerUuid)
     {
         UUID account = sessions.get(playerUuid);
-        return account == null ? Optional.empty() : Optional.ofNullable(usersById.get(account)).filter(accessAllowed);
+        return account == null ? Optional.empty() : Optional.ofNullable(directoryIndex.source().get(account)).filter(accessAllowed);
     }
 
     private void validateRegistration(UUID ownerUuid, String username)
@@ -615,8 +668,7 @@ public class ServerUserManager
         {
             try
             {
-                for (var user : UserStorage.read(storageFile))
-                    acceptLoaded(user);
+                acceptLoaded(UserStorage.read(storageFile));
                 return;
             } catch (IOException error)
             {
@@ -634,6 +686,7 @@ public class ServerUserManager
             {
                 throw new IllegalArgumentException("Unsupported account storage version");
             }
+            var loaded = new ArrayList<ServerUser>();
             for (var entry : root.getAsJsonArray("users"))
             {
                 JsonObject data = entry.getAsJsonObject();
@@ -649,9 +702,10 @@ public class ServerUserManager
                 {
                     user = user.withProfile(data.getAsJsonObject("profile"));
                 }
-                acceptLoaded(user);
+                loaded.add(user);
             }
-            persist(usersById); // One-way migration; keep the legacy file untouched as a backup.
+            acceptLoaded(loaded);
+            persist(directoryIndex.source()); // One-way migration; keep the legacy file untouched as a backup.
         } catch (IOException exception)
         {
             throw new UncheckedIOException("Cannot load account registry", exception);
@@ -661,16 +715,26 @@ public class ServerUserManager
         }
     }
 
-    private void acceptLoaded(ServerUser user)
+    private void acceptLoaded(List<ServerUser> loaded)
     {
-        validateRegistration(user.getOwnerUuid(), user.getUsername());
-        if (usersById.containsKey(user.getUuid()) || user.getExchangeUserId() != 0 && usersById.values().stream().anyMatch(other -> other.getExchangeUserId() == user.getExchangeUserId()))
+        var values = new HashMap<UUID, ServerUser>();
+        var usernames = new HashSet<String>();
+        var exchangeIds = new HashSet<Long>();
+        var owners = new HashMap<UUID, Integer>();
+        for (var user : loaded)
         {
-            throw new IllegalArgumentException("Duplicate persisted account or exchange user ID");
+            Objects.requireNonNull(user.getOwnerUuid(), "ownerUuid");
+            if (values.put(user.getUuid(), user) != null || !usernames.add(normalizeUsername(user.getUsername()))
+                || user.getExchangeUserId() != 0 && !exchangeIds.add(user.getExchangeUserId()))
+            {
+                throw new IllegalArgumentException("Duplicate persisted account or exchange user ID");
+            }
+            if (owners.merge(user.getOwnerUuid(), 1, Integer::sum) > MAX_ACCOUNTS_PER_UUID)
+            {
+                throw new IllegalStateException("A player UUID may create at most three accounts");
+            }
         }
-        var next = new HashMap<>(usersById);
-        next.put(user.getUuid(), user);
-        usersById = Map.copyOf(next);
+        publishUsers(values);
     }
 
     /**

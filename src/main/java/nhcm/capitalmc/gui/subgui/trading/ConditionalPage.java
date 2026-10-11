@@ -90,7 +90,7 @@ public class ConditionalPage extends BaseSubGui
         long selected = gui.getSelectedConditional();
         boolean showHistory = history;
         var currentCursor = cursor;
-        var data = cache.get(List.of(key, history, cursor, selected), () -> {
+        var data = cache.get(List.of(key, history, cursor, selected), history ? 5000 : 250, () -> {
             CompletableFuture<ConditionalOrderView> detail = selected == 0 ? CompletableFuture.completedFuture(null) : CapitalMC.exchange.conditionalOrders().get(selected).snapshot().thenApply(value -> {
                 if (value.request().userId() != user.getExchangeUserId())
                 {
@@ -98,10 +98,12 @@ public class ConditionalPage extends BaseSubGui
                 }
                 return value;
             });
-            return SymbolUtil.allSymbols().thenCompose(symbols -> ActivityScope.page(next -> CapitalMC.exchange.conditionalOrders().list(
-                    new ObservationQuery().withUserId(user.getExchangeUserId()).withIncludeTerminal(showHistory).withLimit(27).withCursor(next)), currentCursor,
-                    row -> ActivityScope.matches(row, symbols, type) && (showHistory ? row.status() != ConditionalOrderStatus.Waiting : row.status() == ConditionalOrderStatus.Waiting))
-                    .thenApply(result -> new Data(result.values(), symbols, result.page(), null)))
+            return SymbolUtil.allSymbols().thenCompose(symbols -> {
+                var scope = ActivityScope.matching(symbols, type);
+                return ActivityScope.page(next -> TradeUtil.conditionalPage(user, showHistory, next), currentCursor,
+                        row -> scope.test(row) && (showHistory ? row.status() != ConditionalOrderStatus.Waiting : row.status() == ConditionalOrderStatus.Waiting))
+                        .thenApply(result -> new Data(result.values(), symbols, result.page(), null));
+            })
                        .thenCombine(detail, (result, value) -> new Data(result.rows, result.symbols, result.page, value));
         });
         displayed = data;

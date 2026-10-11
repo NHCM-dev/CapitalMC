@@ -5,6 +5,7 @@ import nhcm.advmatch.command.read.ReadOrders;
 import nhcm.advmatch.command.read.ReadPositions;
 import nhcm.advmatch.command.read.ReadTrades;
 import nhcm.advmatch.command.read.ReadUserOpenOrders;
+import nhcm.advmatch.command.read.ReadConditionalOrders;
 import nhcm.advmatch.model.*;
 import nhcm.advmatch.object.*;
 import nhcm.capitalmc.account.ServerUser;
@@ -50,6 +51,10 @@ public class TradeUtil
     {
         return UserUtil.getUser(user).thenCompose(backend -> {
             var query = bounded(backend.id(), symbol, cursor).withIncludeTerminal(history);
+            if (!history && !cursor.started())
+            {
+                return QueryUtil.liveRows(query.withKind(ReadKind.UserOpenOrders), OrderView.class).thenApply(TradeUtil::checked);
+            }
             return QueryUtil.exchange().submit(history ? new ReadOrders(query)
                                                        : new ReadUserOpenOrders(query)).thenApply(TradeUtil::checked);
         });
@@ -57,8 +62,12 @@ public class TradeUtil
 
     public static CompletableFuture<ReadResponse<PositionView>> positionPage(ServerUser user, boolean history, long symbol, ReadCursor cursor)
     {
-        return UserUtil.getUser(user).thenCompose(backend -> QueryUtil.exchange().submit(new ReadPositions(
-                bounded(backend.id(), symbol, cursor).withIncludeTerminal(history).withPositionFilter(history ? PositionFilter.All : PositionFilter.Open))).thenApply(TradeUtil::checked));
+        return UserUtil.getUser(user).thenCompose(backend -> {
+            var query = bounded(backend.id(), symbol, cursor).withIncludeTerminal(history)
+                                                             .withPositionFilter(history ? PositionFilter.All : PositionFilter.Open);
+            return !history && !cursor.started() ? QueryUtil.liveRows(query.withKind(ReadKind.Positions), PositionView.class).thenApply(TradeUtil::checked)
+                                                : QueryUtil.exchange().submit(new ReadPositions(query)).thenApply(TradeUtil::checked);
+        });
     }
 
     public static CompletableFuture<ReadResponse<TradeView>> tradePage(ServerUser user, long symbol, ReadCursor cursor)
@@ -67,9 +76,18 @@ public class TradeUtil
                 bounded(backend.id(), symbol, cursor))).thenApply(TradeUtil::checked));
     }
 
+    public static CompletableFuture<ReadResponse<ConditionalOrderView>> conditionalPage(ServerUser user, boolean history, ReadCursor cursor)
+    {
+        return UserUtil.getUser(user).thenCompose(backend -> {
+            var query = bounded(backend.id(), 0, cursor).withIncludeTerminal(history).withKind(ReadKind.ConditionalOrders);
+            return !history && !cursor.started() ? QueryUtil.liveRows(query, ConditionalOrderView.class).thenApply(TradeUtil::checked)
+                                                : QueryUtil.exchange().submit(new ReadConditionalOrders(query)).thenApply(TradeUtil::checked);
+        });
+    }
+
     private static ObservationQuery bounded(long user, long symbol, ReadCursor cursor)
     {
-        return new ObservationQuery().withUserId(user).withSymbolId(symbol).withLimit(27).withScanBudget(2048).withCursor(cursor);
+        return new ObservationQuery().withUserId(user).withSymbolId(symbol).withLimit(27).withScanBudget(512).withCursor(cursor);
     }
 
     private static <T> ReadResponse<T> checked(ReadResponse<T> response)
@@ -95,7 +113,8 @@ public class TradeUtil
         {
             return CompletableFuture.failedFuture(new IllegalStateException("Cancellation scan limit reached; invoke again"));
         }
-        return orderPage(user, false, 0, new ReadCursor()).thenCompose(response -> {
+        return UserUtil.getUser(user).thenCompose(backend -> QueryUtil.exchange().submit(new ReadUserOpenOrders(
+                bounded(backend.id(), 0, new ReadCursor()).withIncludeTerminal(false)))).thenApply(TradeUtil::checked).thenCompose(response -> {
             if (response.values().isEmpty())
             {
                 return CompletableFuture.completedFuture(total);

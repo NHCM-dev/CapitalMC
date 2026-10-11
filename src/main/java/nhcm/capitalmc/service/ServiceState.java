@@ -11,6 +11,7 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.zip.CRC32;
 
 /**
@@ -27,6 +28,20 @@ public class ServiceState
     private volatile SharedMetadata shared;
     private JsonObject durableData;
     private volatile long sharedGeneration;
+    private record PendingEdit(Consumer<JsonObject> edit, CompletableFuture<Void> result, String section, String key) {}
+    private final ArrayDeque<PendingEdit> pendingEdits = new ArrayDeque<>();
+    private boolean drainScheduled;
+    private long committedGroups, committedEdits;
+
+    public record Metrics(long groups, long edits, int queued, boolean faulted) {}
+
+    public synchronized Metrics metrics()
+    {
+        synchronized (pendingEdits)
+        {
+            return new Metrics(committedGroups, committedEdits, pendingEdits.size(), faulted);
+        }
+    }
 
     public CompletableFuture<Void> useShared(SharedMetadata shared)
     {
@@ -154,10 +169,178 @@ public class ServiceState
 
     public CompletableFuture<Void> updateAsync(Consumer<JsonObject> edit)
     {
-        return ApplicationExecutors.io(() -> {
-            update(edit);
-            return null;
-        });
+        return enqueue(edit, null, null);
+    }
+
+    /** Copy only the edited record; existing records remain immutable and shared. */
+    public CompletableFuture<Void> updateEntryAsync(String section, String key, Consumer<JsonObject> edit)
+    {
+        if (SharedMetadata.FIELDS.contains(section) || section.equals("_stateSequence"))
+        {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Entry updates require a local metadata section"));
+        }
+        return enqueue(edit, Objects.requireNonNull(section), Objects.requireNonNull(key));
+    }
+
+    private CompletableFuture<Void> enqueue(Consumer<JsonObject> edit, String section, String key)
+    {
+        var result = new CompletableFuture<Void>()
+        {
+            @Override
+            public boolean cancel(boolean interrupt)
+            {
+                return false;
+            }
+        };
+        synchronized (pendingEdits)
+        {
+            if (pendingEdits.size() >= 4096)
+            {
+                return CompletableFuture.failedFuture(new RejectedExecutionException("Metadata write queue is full"));
+            }
+            pendingEdits.addLast(new PendingEdit(edit, result, section, key));
+            if (!drainScheduled)
+            {
+                drainScheduled = true;
+                try
+                {
+                    ApplicationExecutors.IO.execute(this::drainEdits);
+                }
+                catch (RuntimeException failure)
+                {
+                    pendingEdits.removeLast();
+                    drainScheduled = false;
+                    result.completeExceptionally(failure);
+                }
+            }
+        }
+        return result;
+    }
+
+    private void drainEdits()
+    {
+        var group = new ArrayList<PendingEdit>();
+        synchronized (pendingEdits)
+        {
+            while (group.size() < 64 && !pendingEdits.isEmpty()) group.add(pendingEdits.removeFirst());
+        }
+        commitGroup(group);
+        var rejected = new ArrayList<PendingEdit>();
+        RuntimeException rejection = null;
+        synchronized (pendingEdits)
+        {
+            if (pendingEdits.isEmpty())
+            {
+                drainScheduled = false;
+            }
+            else
+            {
+                try
+                {
+                    // Yield the shared IO executor between groups so one gateway's
+                    // history cannot starve another gateway's durable preparation.
+                    ApplicationExecutors.IO.execute(this::drainEdits);
+                }
+                catch (RuntimeException failure)
+                {
+                    rejection = failure;
+                    rejected.addAll(pendingEdits);
+                    pendingEdits.clear();
+                    drainScheduled = false;
+                }
+            }
+        }
+        for (var request : rejected) request.result().completeExceptionally(rejection);
+    }
+
+    private void commitGroup(List<PendingEdit> group)
+    {
+        var accepted = new ArrayList<PendingEdit>();
+        var rejected = new HashMap<PendingEdit, Throwable>();
+        try
+        {
+            synchronized (this)
+            {
+                if (faulted) throw new IllegalStateException("Metadata persistence fault; reconciliation required");
+                JsonObject next = data;
+                boolean entriesOnly = true;
+                var copiedSections = new HashSet<String>();
+                for (var request : group)
+                {
+                    try
+                    {
+                        JsonObject candidate;
+                        if (request.section() == null)
+                        {
+                            candidate = next.deepCopy();
+                            request.edit().accept(candidate);
+                            entriesOnly = false;
+                            copiedSections.clear();
+                        }
+                        else
+                        {
+                            candidate = next == data ? shallow(next) : next;
+                            var records = next.has(request.section()) ? next.getAsJsonObject(request.section()) : new JsonObject();
+                            if (!copiedSections.contains(request.section())) records = shallow(records);
+                            var record = records.has(request.key()) ? records.getAsJsonObject(request.key()).deepCopy() : new JsonObject();
+                            request.edit().accept(record);
+                            records.add(request.key(), record);
+                            candidate.add(request.section(), records);
+                            copiedSections.add(request.section());
+                        }
+                        if (candidate.has("_stateSequence")) throw new IllegalArgumentException("Reserved metadata field");
+                        next = candidate;
+                        accepted.add(request);
+                    }
+                    catch (RuntimeException failure)
+                    {
+                        rejected.put(request, failure);
+                    }
+                }
+                if (!accepted.isEmpty())
+                {
+                    JsonArray patches = null;
+                    if (entriesOnly)
+                    {
+                        patches = new JsonArray();
+                        var paths = new HashSet<String>();
+                        for (var request : accepted)
+                        {
+                            var path = new JsonArray();
+                            path.add(request.section());
+                            if (data.has(request.section())) path.add(request.key());
+                            if (!paths.add(path.toString())) continue;
+                            JsonElement before = data.get(request.section());
+                            JsonElement after = next.get(request.section());
+                            if (path.size() == 2)
+                            {
+                                before = before.getAsJsonObject().get(request.key());
+                                after = after.getAsJsonObject().get(request.key());
+                            }
+                            diff(before, after, path, patches);
+                        }
+                    }
+                    commit(next, patches);
+                    committedGroups++;
+                    committedEdits += accepted.size();
+                }
+            }
+            // Every accepted edit is acknowledged only after the shared commit,
+            // local WAL force and immutable publication have completed.
+            accepted.forEach(request -> request.result().complete(null));
+            rejected.forEach((request, failure) -> request.result().completeExceptionally(failure));
+        }
+        catch (Throwable failure)
+        {
+            group.forEach(request -> request.result().completeExceptionally(rejected.getOrDefault(request, failure)));
+        }
+    }
+
+    private static JsonObject shallow(JsonObject source)
+    {
+        var result = new JsonObject();
+        source.entrySet().forEach(entry -> result.add(entry.getKey(), entry.getValue()));
+        return result;
     }
 
     /**
@@ -171,6 +354,16 @@ public class ServiceState
         }
         JsonObject next = data.deepCopy();
         edit.accept(next);
+        commit(next);
+    }
+
+    private void commit(JsonObject next)
+    {
+        commit(next, null);
+    }
+
+    private void commit(JsonObject next, JsonArray patches)
+    {
         if (next.has("_stateSequence"))
         {
             throw new IllegalArgumentException("Reserved metadata field");
@@ -185,8 +378,8 @@ public class ServiceState
                 sharedGeneration++;
             }
         }
-        JsonArray changes = new JsonArray();
-        diff(durableData, next, new JsonArray(), changes);
+        JsonArray changes = patches == null ? new JsonArray() : patches;
+        if (patches == null) diff(durableData, next, new JsonArray(), changes);
         if (changes.isEmpty())
         {
             return;

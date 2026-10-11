@@ -22,6 +22,7 @@ import nhcm.advmatch.model.ContractOrderOptions;
 import nhcm.advmatch.model.OrderSide;
 import nhcm.advmatch.model.OrderType;
 import nhcm.advmatch.model.TimeInForce;
+import nhcm.advmatch.model.PersistenceStatus;
 import nhcm.capitalmc.CapitalMC;
 import nhcm.capitalmc.account.ServerUser;
 import nhcm.capitalmc.exchange.UserUtil;
@@ -31,8 +32,12 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
+import java.util.function.Function;
+import nhcm.advmatch.object.User;
 
 /**
  * Audited, idempotent exchange mutations. In-doubt commands remain in the journal for reconciliation.
@@ -47,7 +52,43 @@ public class SettlementService
     private final ServiceState state;
     private final McAssetRegistry assets;
     private final LongSupplier requestIds;
+    private final Function<ServerUser, CompletableFuture<User>> resolveUser;
     private final Set<Long> activeRequests = ConcurrentHashMap.newKeySet();
+    private long nextLocalRequest, endLocalRequest;
+    private CompletableFuture<PersistenceStatus> flushing;
+    private final LongAdder flushGroups = new LongAdder();
+
+    public long flushGroups()
+    {
+        return flushGroups.sum();
+    }
+
+    private synchronized CompletableFuture<PersistenceStatus> durable(long sequence)
+    {
+        if (flushing == null)
+        {
+            var result = new CompletableFuture<PersistenceStatus>();
+            flushing = result;
+            CompletableFuture.delayedExecutor(2, TimeUnit.MILLISECONDS).execute(() -> {
+                flushGroups.increment();
+                exchange.submit(new Flush()).whenComplete((status, failure) -> {
+                    synchronized (SettlementService.this)
+                    {
+                        if (flushing == result) flushing = null;
+                    }
+                    if (failure == null) result.complete(status);
+                    else result.completeExceptionally(failure);
+                });
+            });
+        }
+        return flushing.thenCompose(status -> {
+            if (!status.enabled() || status.faulted())
+            {
+                return CompletableFuture.failedFuture(new IllegalStateException("Exchange durability is unavailable; reconciliation required"));
+            }
+            return status.durableThrough() >= sequence ? CompletableFuture.completedFuture(status) : durable(sequence);
+        });
+    }
 
     public SettlementService(GameServices services)
     {
@@ -55,19 +96,27 @@ public class SettlementService
         this.state = services.state;
         this.assets = services.assets;
         this.requestIds = CapitalMC.runtime == null ? null : CapitalMC.runtime.backend::nextRequestId;
+        this.resolveUser = UserUtil::getUser;
     }
 
     public SettlementService(Exchange exchange, ServiceState state)
     {
+        this(exchange, state, null);
+    }
+
+    /** Trusted headless gateway; callers supply centrally reserved IDs when sharing an owner. */
+    public SettlementService(Exchange exchange, ServiceState state, LongSupplier requestIds)
+    {
         this.exchange = exchange;
         this.state = state;
         this.assets = null;
-        this.requestIds = null;
+        this.requestIds = requestIds;
+        this.resolveUser = user -> exchange.users().find(user.getExchangeUserId());
     }
 
     public CompletableFuture<Long> account(ServerUser user, AccountType type)
     {
-        return UserUtil.getUser(user).thenCompose(value -> type == AccountType.Spot
+        return resolveUser.apply(user).thenCompose(value -> type == AccountType.Spot
                 ? value.spotAccount().thenApply(account -> account.id()) : value.contractAccount().thenApply(account -> account.id()));
     }
 
@@ -331,11 +380,9 @@ public class SettlementService
             {
                 throw new IllegalArgumentException("ui.asset.disabled");
             }
-            return UserUtil.getUser(user);
+            return resolveUser.apply(user);
         }).thenComposeAsync(backend -> {
-            long request = begin("order", backend.id(), symbol, 0, quantity);
-            state.update(root -> {
-                JsonObject entry = root.getAsJsonObject("commands").getAsJsonObject(Long.toString(request));
+            return beginAsync("order", backend.id(), symbol, 0, quantity, entry -> {
                 entry.addProperty("price", price);
                 entry.addProperty("side", side.name());
                 entry.addProperty("orderType", type.name());
@@ -345,21 +392,20 @@ public class SettlementService
                 {
                     entry.add("contractOptions", new Gson().toJsonTree(options));
                 }
-            });
-            return accepted(exchange.submit(new PlaceOrder(
-                    backend.id(), symbol, side, type, tif, price, quantity, System.currentTimeMillis(), options, request)), request);
+            }).thenCompose(request -> accepted(exchange.submit(new PlaceOrder(
+                    backend.id(), symbol, side, type, tif, price, quantity, System.currentTimeMillis(), options, request)), request));
         }, ApplicationExecutors.IO);
     }
 
     public CompletableFuture<CommandReceipt> cancel(ServerUser user, long order, long timestamp)
     {
-        return UserUtil.getUser(user).thenCompose(backend -> exchange.orders().get(order).snapshot().thenComposeAsync(view -> {
+        return resolveUser.apply(user).thenCompose(backend -> exchange.orders().get(order).snapshot().thenComposeAsync(view -> {
             if (view.userId() != backend.id())
             {
                 throw new SecurityException("Order belongs to another user");
             }
-            long request = begin("CANCEL_ORDER", backend.id(), order, 0, 0);
-            return accepted(exchange.submit(new CancelOrder(backend.id(), order, timestamp, request)), request);
+            return beginAsync("CANCEL_ORDER", backend.id(), order, 0, 0, entry -> {})
+                    .thenCompose(request -> accepted(exchange.submit(new CancelOrder(backend.id(), order, timestamp, request)), request));
         }, ApplicationExecutors.IO));
     }
 
@@ -370,38 +416,37 @@ public class SettlementService
             {
                 throw new IllegalArgumentException("ui.asset.disabled");
             }
-            return UserUtil.getUser(user);
+            return resolveUser.apply(user);
         }).thenComposeAsync(backend -> {
             var request = ticket.withUserId(backend.id()).withTimestamp(System.currentTimeMillis());
-            long id = begin("PLACE_CONDITIONAL", backend.id(), request.symbolId(), 0, request.quantity(), entry -> entry.add("ticket", new Gson().toJsonTree(request)));
-            return accepted(exchange.submit(new PlaceConditionalOrder(request, id)), id);
+            return beginAsync("PLACE_CONDITIONAL", backend.id(), request.symbolId(), 0, request.quantity(), entry -> entry.add("ticket", new Gson().toJsonTree(request)))
+                    .thenCompose(id -> accepted(exchange.submit(new PlaceConditionalOrder(request, id)), id));
         }, ApplicationExecutors.IO);
     }
 
     public CompletableFuture<CommandReceipt> cancelConditional(ServerUser user, long conditional)
     {
-        return UserUtil.getUser(user).thenCompose(backend -> exchange.conditionalOrders().get(conditional).snapshot().thenComposeAsync(view -> {
+        return resolveUser.apply(user).thenCompose(backend -> exchange.conditionalOrders().get(conditional).snapshot().thenComposeAsync(view -> {
             if (view.request().userId() != backend.id())
             {
                 throw new SecurityException("ui.conditional.owner");
             }
-            long id = begin("CANCEL_CONDITIONAL", backend.id(), conditional, 0, 0);
-            return accepted(exchange.submit(new CancelConditionalOrder(backend.id(), conditional, System.currentTimeMillis(), id)), id);
+            return beginAsync("CANCEL_CONDITIONAL", backend.id(), conditional, 0, 0, entry -> {})
+                    .thenCompose(id -> accepted(exchange.submit(new CancelConditionalOrder(backend.id(), conditional, System.currentTimeMillis(), id)), id));
         }, ApplicationExecutors.IO));
     }
 
     public CompletableFuture<CommandReceipt> modifyConditional(ServerUser user, long conditional, long trigger, long price, long quantity)
     {
-        return UserUtil.getUser(user).thenCompose(backend -> exchange.conditionalOrders().get(conditional).snapshot().thenComposeAsync(view -> {
+        return resolveUser.apply(user).thenCompose(backend -> exchange.conditionalOrders().get(conditional).snapshot().thenComposeAsync(view -> {
             if (view.request().userId() != backend.id())
             {
                 throw new SecurityException("ui.conditional.owner");
             }
-            long id = begin("MODIFY_CONDITIONAL", backend.id(), conditional, 0, quantity, entry -> {
+            return beginAsync("MODIFY_CONDITIONAL", backend.id(), conditional, 0, quantity, entry -> {
                 entry.addProperty("trigger", trigger);
                 entry.addProperty("price", price);
-            });
-            return accepted(exchange.submit(new ModifyConditionalOrder(backend.id(), conditional, trigger, price, quantity, System.currentTimeMillis(), id)), id);
+            }).thenCompose(id -> accepted(exchange.submit(new ModifyConditionalOrder(backend.id(), conditional, trigger, price, quantity, System.currentTimeMillis(), id)), id));
         }, ApplicationExecutors.IO));
     }
 
@@ -444,7 +489,7 @@ public class SettlementService
 
     public CompletableFuture<CommandReceipt> addMargin(ServerUser user, long position, long amount)
     {
-        return UserUtil.getUser(user).thenCompose(backend -> addMargin(backend.id(), position, amount));
+        return resolveUser.apply(user).thenCompose(backend -> addMargin(backend.id(), position, amount));
     }
 
     /**
@@ -465,7 +510,7 @@ public class SettlementService
         {
             return CompletableFuture.failedFuture(new IllegalArgumentException("ui.position.margin_positive"));
         }
-        return UserUtil.getUser(user).thenCompose(backend -> changeMargin(backend.id(), position, Math.negateExact(amount)));
+        return resolveUser.apply(user).thenCompose(backend -> changeMargin(backend.id(), position, Math.negateExact(amount)));
     }
 
     private CompletableFuture<CommandReceipt> changeMargin(long user, long position, long amount)
@@ -485,6 +530,40 @@ public class SettlementService
             });
             return accepted(exchange.submit(new AddMargin(position, user, view.symbolId(), amount, request)), request);
         }, ApplicationExecutors.IO);
+    }
+
+    private CompletableFuture<Long> beginAsync(String type, long source, long target, long asset, long amount, Consumer<JsonObject> metadata)
+    {
+        return ApplicationExecutors.io(() -> {
+            if (requestIds != null) return requestIds.getAsLong();
+            if (nextLocalRequest == endLocalRequest)
+            {
+                long[] first = new long[1];
+                state.update(root -> {
+                    first[0] = Math.addExact(root.has("request") ? root.get("request").getAsLong()
+                                                              : Math.multiplyExact(System.currentTimeMillis(), 1000), 1);
+                    root.addProperty("request", Math.addExact(first[0], 4095));
+                });
+                nextLocalRequest = first[0];
+                endLocalRequest = Math.addExact(first[0], 4096);
+            }
+            return nextLocalRequest++;
+        }).thenCompose(id -> {
+            if (!activeRequests.add(id)) return CompletableFuture.failedFuture(new IllegalStateException("ui.operation.busy"));
+            return state.updateEntryAsync("commands", Long.toString(id), entry -> {
+                if (!entry.isEmpty()) throw new IllegalStateException("Request ID is already present");
+                entry.addProperty("type", type);
+                entry.addProperty("source", source);
+                entry.addProperty("target", target);
+                entry.addProperty("asset", asset);
+                entry.addProperty("amount", amount);
+                entry.addProperty("timestamp", System.currentTimeMillis());
+                metadata.accept(entry);
+                entry.addProperty("status", "PENDING");
+            }).thenApply(unused -> id).whenComplete((value, failure) -> {
+                if (failure != null) activeRequests.remove(id);
+            });
+        });
     }
 
     private long begin(String type, long source, long target, long asset, long amount, Consumer<JsonObject> metadata)
@@ -517,32 +596,19 @@ public class SettlementService
 
     private CompletableFuture<CommandReceipt> accepted(CompletableFuture<CommandReceipt> result, long request)
     {
-        return result.thenComposeAsync(receipt -> {
-            state.update(root -> {
-                JsonObject entry = root.getAsJsonObject("commands").getAsJsonObject(Long.toString(request));
-                entry.addProperty("status", receipt.result().accepted() ? "ACCEPTED" : "REJECTED");
+        return result.thenCompose(receipt -> state.updateEntryAsync("commands", Long.toString(request), entry -> {
+            entry.addProperty("status", receipt.result().accepted() ? "ACCEPTED" : "REJECTED");
+            entry.addProperty("sequence", receipt.sequence());
+            entry.addProperty("entityId", receipt.result().entityId());
+            entry.addProperty("state", receipt.result().state());
+            entry.add("receipt", new Gson().toJsonTree(receipt));
+        }).thenCompose(unused -> {
+            if (!receipt.result().accepted()) return CompletableFuture.failedFuture(new BusinessException(receipt));
+            return durable(receipt.sequence()).thenCompose(status -> state.updateEntryAsync("commands", Long.toString(request), entry -> {
+                entry.addProperty("status", "DURABLE");
                 entry.addProperty("sequence", receipt.sequence());
-                entry.addProperty("entityId", receipt.result().entityId());
-                entry.addProperty("state", receipt.result().state());
-                entry.add("receipt", new Gson().toJsonTree(receipt));
-            });
-            if (!receipt.result().accepted())
-            {
-                throw new BusinessException(receipt);
-            }
-            return exchange.submit(new Flush()).thenApplyAsync(status -> {
-                if (!status.enabled() || status.faulted() || status.durableThrough() < receipt.sequence())
-                {
-                    throw new IllegalStateException("Exchange command is not durable; requires reconciliation");
-                }
-                state.update(root -> {
-                    JsonObject entry = root.getAsJsonObject("commands").getAsJsonObject(Long.toString(request));
-                    entry.addProperty("status", "DURABLE");
-                    entry.addProperty("sequence", receipt.sequence());
-                    entry.add("receipt", new Gson().toJsonTree(new CommandReceipt(receipt.sequence(), status.durableThrough(), receipt.duplicate(), receipt.result())));
-                });
-                return receipt;
-            }, ApplicationExecutors.IO);
-        }, ApplicationExecutors.IO).whenComplete((receipt, error) -> activeRequests.remove(request));
+                entry.add("receipt", new Gson().toJsonTree(new CommandReceipt(receipt.sequence(), status.durableThrough(), receipt.duplicate(), receipt.result())));
+            }).thenApply(done -> receipt));
+        })).whenComplete((receipt, error) -> activeRequests.remove(request));
     }
 }

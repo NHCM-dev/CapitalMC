@@ -4,6 +4,7 @@ import nhcm.advmatch.model.*;
 import nhcm.advmatch.BusinessException;
 
 import java.util.List;
+import java.util.stream.Collectors;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -13,7 +14,19 @@ public class ActivityScope
 {
     public static boolean matches(Object row, List<SymbolView> symbols, SymbolType type)
     {
-        long id = switch (row)
+        long id = symbolId(row);
+        return symbols.stream().anyMatch(symbol -> symbol.symbolId() == id && symbol.type() == type);
+    }
+
+    public static Predicate<Object> matching(List<SymbolView> symbols, SymbolType type)
+    {
+        var ids = symbols.stream().filter(symbol -> symbol.type() == type).map(SymbolView::symbolId).collect(Collectors.toUnmodifiableSet());
+        return row -> ids.contains(symbolId(row));
+    }
+
+    private static long symbolId(Object row)
+    {
+        return switch (row)
         {
             case OrderView order -> order.symbolId();
             case PositionView position -> position.symbolId();
@@ -21,7 +34,6 @@ public class ActivityScope
             case TradeView trade -> trade.symbolId();
             default -> 0;
         };
-        return symbols.stream().anyMatch(symbol -> symbol.symbolId() == id && symbol.type() == type);
     }
 
     public static boolean terminal(OrderView order)
@@ -31,13 +43,13 @@ public class ActivityScope
     }
 
     public static <T> CompletableFuture<ReadResponse<T>> page(Function<ReadCursor, CompletableFuture<ReadResponse<T>>> read,
-                                                            ReadCursor cursor, Predicate<T> filter)
+                                                            ReadCursor cursor, Predicate<? super T> filter)
     {
         return page(read, cursor, filter, 16);
     }
 
     private static <T> CompletableFuture<ReadResponse<T>> page(Function<ReadCursor, CompletableFuture<ReadResponse<T>>> read,
-                                                             ReadCursor cursor, Predicate<T> filter, int budget)
+                                                             ReadCursor cursor, Predicate<? super T> filter, int budget)
     {
         return read.apply(cursor).thenCompose(result -> {
             if (result.page().state() != ReadState.Success && result.page().state() != ReadState.NotFound)

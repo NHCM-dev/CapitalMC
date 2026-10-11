@@ -98,7 +98,7 @@ public class ExchangeRuntime implements AutoCloseable
     {
         var persistence = new PersistenceConfig(true, directory.toString(), FlushPolicy.Batch, 256, 10, 0, 2, true,
                 TailRecovery.TruncateIncomplete, 1048576, 4294967296L, 10000, true);
-        var observation = new ObservationConfig(1024, 16384, 16, 65536, true, 0, 4096, 4096);
+        var observation = new ObservationConfig(1024, 16384, 256, 131072, true, 0, 4096, 4096);
         return new ExchangeConfig(persistence, observation, 1024, 0, 1024, 1024, 1024, 4194304);
     }
 

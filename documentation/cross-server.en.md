@@ -9,7 +9,7 @@ Several Minecraft servers can share **one** AdvMatch ledger. Each server keeps i
 Use Java 25 on Windows amd64 or Linux amd64 with glibc 2.38+. Minecraft and Fabric are not required on the owner.
 
 ```text
-java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.3.0-SNAPSHOT-exchange-server.jar ./capitalmc
+java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.4.0-SNAPSHOT-exchange-server.jar ./capitalmc
 ```
 
 The first start creates `capitalmc/connection.json` with a random secret token. The standalone process always listens in LOCAL mode, initially at `127.0.0.1:25570`. Stop it with Ctrl+C before editing configuration. Keep the token private; connected Minecraft instances are trusted gateways with access to the exchange administration API.
@@ -56,7 +56,7 @@ Loopback connections work with the default settings. Other addresses require TLS
 
 ## Subscriptions and interruption
 
-Balances displayed as lists, market lists, depth and retained trade statistics use shared subscriptions. Identical queries share an owner-side source, updates coalesce, unused gateway subscriptions expire, and ordinary GUI refresh runs every 250 ms. Explicit balance checks before custody operations still read current financial state. Full lists retain cursor pagination when they exceed a subscription's bounded snapshot.
+Balances, market lists, depth, live orders, positions and active conditional orders use shared subscriptions. Identical queries share an owner-side source; batched revision checks avoid rebuilding unchanged snapshots. Visible data is polled every 250 ms and GUI rendering follows changes; history refreshes every five seconds. Explicit balance checks before custody operations still read current financial state. Full lists retain cursor pagination when they exceed a subscription's bounded snapshot. See [capacity and operation](performance.en.md) for limits and measured workloads.
 
 Disconnects make live views stale. Subscriptions reconnect automatically to the same exchange. **Orders, transfers and other mutations are never replayed automatically.** A lost response may mean the exchange already executed the request; review the originating server's operation journal and use its existing reconciliation tools. A physical withdrawal is delivered only on the server where it was requested. Chest/shulker eligibility and unfinished custody remain local to that server.
 
@@ -72,4 +72,4 @@ Archive the original gateway's `users.dat` / `users.json` and `exchange/` outsid
 
 Back up the stopped owner's complete directory and every gateway's worlds plus complete `capitalmc` directory. Native WAL, shared metadata, account files, local application journals and Minecraft saves are separate durability boundaries; a network connection does not make them atomic. Global configuration uses an exclusive lease and compare-and-set metadata updates. Interrupted configuration can require administrator review.
 
-Build outputs are `build/libs/CapitalMC-0.3.0-SNAPSHOT.jar` for Minecraft and `build/libs/CapitalMC-0.3.0-SNAPSHOT-exchange-server.jar` for the owner. `./gradlew.bat build` builds both.
+Build outputs are `build/libs/CapitalMC-0.4.0-SNAPSHOT.jar` for Minecraft and `build/libs/CapitalMC-0.4.0-SNAPSHOT-exchange-server.jar` for the owner. `./gradlew.bat build` builds both.

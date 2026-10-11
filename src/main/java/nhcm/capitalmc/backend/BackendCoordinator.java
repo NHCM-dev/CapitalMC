@@ -27,8 +27,9 @@ public class BackendCoordinator implements AutoCloseable
     private final ServerUserManager users;
     private final ServiceState shared;
     private final String exchangeId;
-    private final ExecutorService workers = Executors.newFixedThreadPool(2,
-            Thread.ofPlatform().daemon().name("capitalmc-backend-", 0).factory());
+    private final ExecutorService workers = new ThreadPoolExecutor(2, 2, 0, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(1024), Thread.ofPlatform().daemon().name("capitalmc-backend-", 0).factory(),
+            new ThreadPoolExecutor.AbortPolicy());
     private final ExecutorService waits = Executors.newVirtualThreadPerTaskExecutor();
     private final ScheduledExecutorService maintenance = Executors.newSingleThreadScheduledExecutor(
             Thread.ofPlatform().daemon().name("capitalmc-backend-maintenance").factory());
@@ -44,6 +45,7 @@ public class BackendCoordinator implements AutoCloseable
     private long metadataSequence = -1;
     private final Object custodyAdmission = new Object();
     private final DataCompatibility compatibility;
+    private volatile ExchangeServer endpoint;
 
     public BackendCoordinator(Exchange exchange, ServerUserManager users, Path directory) throws IOException
     {
@@ -100,6 +102,7 @@ public class BackendCoordinator implements AutoCloseable
 
     public void expose(ExchangeServer server)
     {
+        endpoint = server;
         server.extensions((context, operation, bytes) -> {
             JsonObject request;
             try
@@ -135,7 +138,7 @@ public class BackendCoordinator implements AutoCloseable
         if (operation == 10 || operation == 30)
         {
             long userId = reader.u64();
-            users.getUsers().stream().filter(user -> user.getExchangeUserId() == userId).findFirst().ifPresent(users::requireAccess);
+            users.findByExchangeId(userId).ifPresent(users::requireAccess);
         }
     }
 
@@ -145,7 +148,14 @@ public class BackendCoordinator implements AutoCloseable
         {
             return CompletableFuture.failedFuture(new IllegalStateException("Instance is disconnected"));
         }
-        return CompletableFuture.supplyAsync(() -> dispatch(context, operation, request), workers).thenCompose(future -> future);
+        try
+        {
+            return CompletableFuture.supplyAsync(() -> dispatch(context, operation, request), workers).thenCompose(future -> future);
+        }
+        catch (RejectedExecutionException failure)
+        {
+            return CompletableFuture.failedFuture(failure);
+        }
     }
 
     private CompletableFuture<JsonElement> dispatch(ExchangeServer.ClientContext context, int operation, JsonObject request)
@@ -159,6 +169,12 @@ public class BackendCoordinator implements AutoCloseable
                 info.addProperty("protocol", 1);
                 info.addProperty("capitalmcVersion", DataCompatibility.version());
                 info.add("versionWarnings", new Gson().toJsonTree(compatibility.warnings()));
+                var metrics = new JsonObject();
+                var gson = new Gson();
+                metrics.add("subscriptions", gson.toJsonTree(exchange.subscriptions().metrics()));
+                metrics.add("metadata", gson.toJsonTree(shared.metrics()));
+                if (endpoint != null) metrics.add("gateway", gson.toJsonTree(endpoint.metrics()));
+                info.add("metrics", metrics);
                 return CompletableFuture.completedFuture(info);
             }
             case BackendClient.ACCOUNTS ->
@@ -269,9 +285,26 @@ public class BackendCoordinator implements AutoCloseable
                 }
                 var range = new JsonObject();
                 shared.update(root -> {
-                    long first = root.get("requestNext").getAsLong();
-                    long end = Math.addExact(first, count);
-                    root.addProperty("requestNext", end);
+                    var counters = root.has("requestNamespaces") ? root.getAsJsonObject("requestNamespaces") : new JsonObject();
+                    String instance = context.instanceId();
+                    var counter = counters.has(instance) ? counters.getAsJsonObject(instance) : new JsonObject();
+                    if (!counter.has("namespace"))
+                    {
+                        int namespace = root.has("nextRequestNamespace") ? root.get("nextRequestNamespace").getAsInt() : 0;
+                        if (namespace >= 32768) throw new IllegalStateException("Request namespaces exhausted");
+                        counter.addProperty("namespace", namespace);
+                        counter.addProperty("next", 1L);
+                        root.addProperty("nextRequestNamespace", namespace + 1);
+                    }
+                    long next = counter.get("next").getAsLong();
+                    long limit = Math.addExact(next, count);
+                    if (limit >= (1L << 48)) throw new IllegalStateException("Gateway request counter exhausted");
+                    long prefix = Long.MIN_VALUE | ((long) counter.get("namespace").getAsInt() << 48);
+                    long first = prefix | next;
+                    long end = prefix | limit;
+                    counter.addProperty("next", limit);
+                    counters.add(instance, counter);
+                    root.add("requestNamespaces", counters);
                     range.addProperty("first", first);
                     range.addProperty("end", end);
                 });
@@ -326,7 +359,7 @@ public class BackendCoordinator implements AutoCloseable
     private static void validateCustody(byte[] packet, JsonObject bindings)
     {
         var reader = new WireReader(packet);
-        if (reader.u16() != 1 || reader.u8() != 0 || reader.u16() != 2 || reader.u64() <= 0)
+        if (reader.u16() != 1 || reader.u8() != 0 || reader.u16() != 2 || reader.u64() == 0)
         {
             throw new IllegalArgumentException("Invalid custody mutation header");
         }
