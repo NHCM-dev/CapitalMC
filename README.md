@@ -2,7 +2,7 @@
 
 English · [简体中文](README.zh-CN.md)
 
-A server-side Minecraft exchange powered by **AdvMatch 1.4.0**. Trade items and electronic assets through an inventory GUI. Players do not need a client mod.
+A server-side Minecraft exchange powered by **AdvMatch 2.0.0**. Trade items and electronic assets through an inventory GUI. Players do not need a client mod.
 
 ## Features
 
