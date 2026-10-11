@@ -17,6 +17,39 @@ class BinaryStateStoreTest
     Path directory;
 
     @Test
+    void manualCheckpointUsesLiveWriterAndPreservesLaterWal() throws Exception
+    {
+        var options = BinaryStateStore.Options.defaults();
+        var store = new BinaryStateStore(directory, options);
+        var state = new JsonObject();
+        state.addProperty("value", 1);
+        store.replace(state.deepCopy());
+        assertTrue(BinaryStateStore.checkpointStored(directory, options));
+        assertEquals(0, Files.size(directory.resolve("journal.wal")));
+        state.addProperty("value", 2);
+        store.replace(state.deepCopy());
+        var recovered = new BinaryStateStore(directory, options);
+        assertEquals(state, recovered.snapshot());
+        assertEquals(1, recovered.replayedRecords());
+    }
+
+    @Test
+    void manualCheckpointFailureFaultsTheExistingWriter() throws Exception
+    {
+        var options = BinaryStateStore.Options.defaults();
+        var store = new BinaryStateStore(directory, options);
+        var state = new JsonObject();
+        state.addProperty("value", 1);
+        store.replace(state.deepCopy());
+        Path blocked = directory.resolve("snapshots/snapshot-00000000000000000001.bin");
+        Files.createDirectory(blocked);
+        Files.writeString(blocked.resolve("prevent-replacement"), "failure fixture");
+        assertThrows(IOException.class, () -> BinaryStateStore.checkpointStored(directory, options));
+        state.addProperty("value", 2);
+        assertThrows(IOException.class, () -> store.replace(state));
+    }
+
+    @Test
     void snapshotsBoundReplayAndRetainExactBinaryValues() throws Exception
     {
         var options = new BinaryStateStore.Options(10, 1024 * 1024, 2);

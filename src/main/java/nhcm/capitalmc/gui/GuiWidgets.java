@@ -59,7 +59,8 @@ public class GuiWidgets
 
     public static void button(TradingGui gui, int slot, Item item, String name, String lore, Runnable action)
     {
-        gui.setSlot(slot, TradingGui.button(gui.getPlayer(), item, name, lore, () -> GuiActions.run(gui, action)));
+        gui.setSlot(slot, action == null ? TradingGui.icon(gui.getPlayer(), item, name, lore)
+                                        : TradingGui.button(gui.getPlayer(), item, name, lore, action));
     }
 
     /**

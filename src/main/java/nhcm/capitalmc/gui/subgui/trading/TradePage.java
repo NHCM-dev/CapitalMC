@@ -129,6 +129,7 @@ public abstract class TradePage extends BaseSubGui
                                                                                                                                                                                       {
                                                                                                                                                                                           return;
                                                                                                                                                                                       }
+                                                                                                                                                                                      getGui().requestRefresh();
                                                                                                                                                                                       loadingError = error;
                                                                                                                                                                                       if (error == null)
                                                                                                                                                                                       {
@@ -720,6 +721,7 @@ public abstract class TradePage extends BaseSubGui
             var work = GameServices.get().settlements.place(user, symbolId, orderSide, orderType, timeInForce, p, q, capturedOptions);
             work.whenComplete((receipt, error) -> GameServices.get().server.execute(() -> {
                 submitting = false;
+                getGui().requestRefresh();
                 if (error == null && context == selection && epoch == CapitalMC.serverUserManager.getSessionVersion(getGui().getPlayer().getUUID()) && getGui().getUser().filter(u -> u.getUuid().equals(user.getUuid())).isPresent())
                 {
                     quantity = 0;

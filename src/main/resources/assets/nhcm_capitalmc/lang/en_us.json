@@ -968,5 +968,16 @@
   "ui.data.version_warning": "&cCapitalMC data version warning",
   "ui.data.version_details": "&7Source: &e%s\n&7Recorded version: &c%s\n&7Running version: &b%s",
   "ui.data.version_unknown": "Unknown (legacy or missing version information)",
-  "ui.data.version_hint": "&eBack up data and check compatibility and recovery logs. Do not reset financial records."
+  "ui.data.version_hint": "&eBack up data and check compatibility and recovery logs. Do not reset financial records.",
+  "cli.topic.persistence": "Snapshots, WAL, durability and recovery",
+  "cli.persistence.file": "&b%s &7— &e%s bytes",
+  "cli.persistence.flushed": "&aWAL flushed. &7Sequence: &b%s &7| Durable through: &b%s",
+  "cli.persistence.verified": "&aMetadata snapshots/WAL loaded successfully; current native ledger audit is consistent and conserved.",
+  "cli.persistence.audit_failed": "Ledger audit failed. Restore a complete backup before resuming.",
+  "cli.persistence.restart": "&eConfiguration takes effect after restarting the owner. Store pins keep existing data in place. Intervals: sequences / milliseconds; WAL limit: bytes.",
+  "cli.persistence.offline_save": "&eStop the owner and gateways, then run on the owner machine:\n&bjava -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage backup-save <data-root> %s\n&7Includes account metadata, snapshots and WAL. Minecraft worlds must be backed up separately.",
+  "cli.persistence.offline_load": "&eStop the owner and gateways. Prepare a new data directory on the owner machine:\n&bjava -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage load <data-root> %s <new-data-root>\n&7Validates the complete backup and replay before publishing; never overwrites live data. Restore matching worlds/custody state before activation.",
+  "ui.admin.action.storage-snapshot": "Save native and metadata snapshots",
+  "ui.admin.action.storage-config": "Configure persistence",
+  "cli.persistence.offline_wal": "&eStop the owner and gateways, then run on the owner machine:\n&bjava -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage wal-save <data-root> %s\n&7Includes account metadata, snapshots and WAL. Minecraft worlds must be backed up separately."
 }

@@ -102,6 +102,10 @@ public class PollingValue<T>
 
     public void invalidate()
     {
+        if (owner != null)
+        {
+            owner.invalidate(this);
+        }
         generation++;
         key = null;
         pending = false;

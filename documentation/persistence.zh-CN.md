@@ -36,3 +36,39 @@ CapitalMC 的业务数据使用带校验的二进制 WAL 和状态快照。JSON 
 完整记录损坏、序号断档、缺失必要快照或清单时拒绝加载，仅允许丢弃物理上未写完的 WAL 尾部。结果未知的操作保持隔离，重启不意味着可以再次交付物品。Minecraft 世界存盘和交易所 WAL 是两个独立持久化边界，不能宣称实物托管与账本原子提交。
 
 停服时一起备份整个 `capitalmc` 目录和相关世界，包含位置文件、清单、WAL、快照及归档。禁止两个后台同时写同一个原生账本。配置仅在启动时读取；当前不提供复制和自动故障转移。
+
+## 管理员命令
+
+使用 `/cmcadmin help persistence [页码]` 查看语法，支持 Tab 补全，需要服务器所有者权限。
+
+| 命令 | 功能 |
+| --- | --- |
+| `persistence status` | 查询持久化状态、当前序列与已落盘序列 |
+| `persistence flush` | 强制交易所 WAL 落盘 |
+| `persistence snapshot save <原因>` | 为后台账本和已绑定的应用存储生成快照，并记录管理审计 |
+| `persistence snapshot list` / `persistence wal list` | 列出后台文件及字节大小 |
+| `persistence verify` | 加载应用快照/WAL，并审计当前账本 |
+| `persistence config show` | 查看配置 |
+| `persistence config set <字段> <值> <原因>` | 校验并保存配置，重启后台后生效 |
+| `persistence backup list` | 列出完整离线备份 |
+| `persistence backup save <名称>` / `persistence wal save <名称>` | 显示对应的离线备份命令 |
+| `persistence snapshot load <名称>` / `persistence wal load <名称>` | 显示离线恢复命令 |
+
+所有命令以 `/cmcadmin` 开头。REMOTE 的在线操作作用于真正的交易所后台。后台快照不包含其他网关的本地托管存储和 Minecraft 世界；不同存储间的快照不构成原子事务。校验应用 WAL 时，可能按正常启动恢复规则截断物理上不完整的尾部。
+
+## 离线备份与恢复
+
+停止后台和所有网关，使用 JDK 25 运行独立后台 JAR：
+
+```sh
+java -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage backup-save /path/to/capitalmc before-maintenance
+java -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage backup-list /path/to/capitalmc
+java -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage load /path/to/capitalmc before-maintenance /path/to/restored-capitalmc
+java -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage verify /path/to/restored-capitalmc
+```
+
+`backup-save` 先生成快照，再复制完整数据；`wal-save` 先刷盘，再保留现有快照及 WAL 尾部。两者均保存到同级 `capitalmc-backups/<名称>/`，附带 SHA-256 清单。恢复检查完整文件集合、校验和及独立重放结果，只发布到尚不存在的新目录，失败不会替换原数据。名称允许字母、数字、下划线和连字符，长度 1–64。失败可能保留未发布的 `.pending-*` / `.restore-pending-*` 目录，请停服检查。
+
+离线工具还支持 `status`、`flush`、`snapshot-save`、`snapshot-list`、`wal-list`、`verify`、`config-show` 和 `config-set <字段> <值>`。已有后台占用原生写锁时，工具拒绝打开该账本。不能仅凭一个 WAL 文件恢复，必须保留配套快照、清单、存储路径和历史归档；不提供删除活跃 WAL 的命令。
+
+启用恢复数据前，另行恢复对应网关元数据及 Minecraft 世界。不能混用旧账本和较新的物品托管/世界状态。完整备份含账户凭据和连接配置，请妥善保管。

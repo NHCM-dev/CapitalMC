@@ -46,6 +46,7 @@ public class BackendCoordinator implements AutoCloseable
     private long metadataSequence = -1;
     private final Object custodyAdmission = new Object();
     private final DataCompatibility compatibility;
+    private final PersistenceAdministration persistence;
     private volatile ExchangeServer endpoint;
 
     public BackendCoordinator(Exchange exchange, ServerUserManager users, Path directory) throws IOException
@@ -56,6 +57,7 @@ public class BackendCoordinator implements AutoCloseable
     public BackendCoordinator(Exchange exchange, ServerUserManager users, Path directory, DataCompatibility compatibility) throws IOException
     {
         this.compatibility = compatibility;
+        persistence = new PersistenceAdministration(exchange, directory);
         this.exchange = exchange;
         this.users = users;
         Files.createDirectories(directory);
@@ -163,6 +165,10 @@ public class BackendCoordinator implements AutoCloseable
     {
         switch (operation)
         {
+            case BackendClient.PERSISTENCE ->
+            {
+                return persistence.execute(request).thenApply(value -> value);
+            }
             case BackendClient.INFO ->
             {
                 var info = new JsonObject();

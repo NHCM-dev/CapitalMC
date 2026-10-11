@@ -1,5 +1,6 @@
 package nhcm.capitalmc.gui;
 
+import eu.pb4.sgui.api.gui.SlotBasedGui;
 import net.minecraft.world.item.Items;
 import nhcm.capitalmc.CapitalMC;
 import nhcm.capitalmc.account.ServerUser;
@@ -25,14 +26,31 @@ public class GuiActions
         GameServices.get().message(gui.getPlayer(), key, args);
     }
 
+    public static void run(SlotBasedGui gui, Runnable action)
+    {
+        if (gui instanceof TradingGui tradingGui)
+        {
+            run(tradingGui, action);
+        }
+        else
+        {
+            action.run();
+        }
+    }
+
     public static void run(TradingGui gui, Runnable action)
     {
         try
         {
             action.run();
-        } catch (RuntimeException error)
+        }
+        catch (RuntimeException error)
         {
             error(gui, error);
+        }
+        finally
+        {
+            gui.requestRefresh();
         }
     }
 
@@ -110,6 +128,7 @@ public class GuiActions
             {
                 return;
             }
+            gui.requestRefresh();
             if (error == null)
             {
                 message(gui, GuiWidgets.text(gui, success, args));

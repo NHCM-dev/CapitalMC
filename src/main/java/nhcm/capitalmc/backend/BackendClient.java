@@ -20,7 +20,7 @@ public class BackendClient implements SharedMetadata
 
     public static final int INFO = 100, ACCOUNTS = 101, REGISTER = 102, AUTHENTICATE = 103,
                             PASSWORD = 104, ENSURE = 105, REMOVE = 106, METADATA = 110, COMMIT = 111,
-                            ACQUIRE = 112, RELEASE = 113, REQUEST_RANGE = 114, CUSTODY = 116;
+                            ACQUIRE = 112, RELEASE = 113, REQUEST_RANGE = 114, CUSTODY = 116, PERSISTENCE = 117;
     private final Rpc rpc;
     private long nextRequest, endRequest;
     private String metadataRevision = "";

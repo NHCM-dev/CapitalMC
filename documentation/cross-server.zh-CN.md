@@ -9,7 +9,7 @@
 需要 Java 25；支持 Windows amd64 和 Linux amd64（glibc 2.38+）。后台不需要 Minecraft 或 Fabric。
 
 ```text
-java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.5.0-SNAPSHOT-exchange-server.jar ./capitalmc
+java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar ./capitalmc
 ```
 
 首次启动生成 `capitalmc/connection.json` 和随机密钥 `token`，默认监听 `127.0.0.1:25570`。独立后台始终在 LOCAL 模式监听。按 Ctrl+C 停止后修改配置。密钥只交给受信任的 Minecraft 服务器；连接方可以调用交易所管理接口，玩家客户端不应直接连接。
@@ -74,4 +74,4 @@ java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.5.0-SNAPSHOT-exchange-s
 
 [持久化、迁移和备份](persistence.zh-CN.md)
 
-Minecraft 产物为 `build/libs/CapitalMC-0.5.0-SNAPSHOT.jar`，独立后台为 `build/libs/CapitalMC-0.5.0-SNAPSHOT-exchange-server.jar`。`./gradlew.bat build` 同时构建两者。
+Minecraft 产物为 `build/libs/CapitalMC-0.5.1-SNAPSHOT.jar`，独立后台为 `build/libs/CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar`。`./gradlew.bat build` 同时构建两者。

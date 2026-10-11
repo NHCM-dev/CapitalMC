@@ -9,7 +9,7 @@ Several Minecraft servers can share **one** AdvMatch ledger. Each server keeps i
 Use Java 25 on Windows amd64 or Linux amd64 with glibc 2.38+. Minecraft and Fabric are not required on the owner.
 
 ```text
-java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.5.0-SNAPSHOT-exchange-server.jar ./capitalmc
+java --enable-native-access=ALL-UNNAMED -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar ./capitalmc
 ```
 
 The first start creates `capitalmc/connection.json` with a random secret token. The standalone process always listens in LOCAL mode, initially at `127.0.0.1:25570`. Stop it with Ctrl+C before editing configuration. Keep the token private; connected Minecraft instances are trusted gateways with access to the exchange administration API.
@@ -74,4 +74,4 @@ Back up the stopped owner and each gateway in full. World saves and exchange WAL
 
 [Persistence, migration and backups](persistence.en.md)
 
-Build outputs are `build/libs/CapitalMC-0.5.0-SNAPSHOT.jar` for Minecraft and `build/libs/CapitalMC-0.5.0-SNAPSHOT-exchange-server.jar` for the owner. `./gradlew.bat build` builds both.
+Build outputs are `build/libs/CapitalMC-0.5.1-SNAPSHOT.jar` for Minecraft and `build/libs/CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar` for the owner. `./gradlew.bat build` builds both.

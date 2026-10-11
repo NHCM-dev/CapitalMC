@@ -13,6 +13,8 @@ import nhcm.advmatch.command.persistence.ReadPersistenceStatus;
 import nhcm.advmatch.command.read.*;
 import nhcm.advmatch.model.*;
 import nhcm.capitalmc.CapitalMC;
+import nhcm.capitalmc.backend.BackendClient;
+import nhcm.capitalmc.backend.PersistenceAdministration;
 import nhcm.capitalmc.exchange.*;
 import nhcm.capitalmc.gui.*;
 import nhcm.capitalmc.service.*;
@@ -35,7 +37,7 @@ import java.util.stream.Collectors;
  */
 public class AdminCommand extends BaseCommand
 {
-    private static final List<String> TOPICS = List.of("asset", "market", "user", "balance", "peg", "journal", "exchange", "gui", "order", "position");
+    private static final List<String> TOPICS = List.of("asset", "market", "user", "balance", "peg", "journal", "exchange", "gui", "order", "position", "persistence");
     private static final Gson JSON = new Gson();
 
     public AdminCommand()
@@ -153,6 +155,19 @@ public class AdminCommand extends BaseCommand
             query(root, "journal list " + kind, "page", c -> journal(c, kind));
             query(root, "journal search " + kind, "search page", c -> journal(c, kind));
         }
+        query(root, "persistence status", "", this::status);
+        query(root, "persistence flush", "", c -> persistence(c, "flush"));
+        query(root, "persistence snapshot list", "", c -> persistence(c, "snapshot-list"));
+        query(root, "persistence wal list", "", c -> persistence(c, "wal-list"));
+        query(root, "persistence verify", "", c -> persistence(c, "verify"));
+        query(root, "persistence config show", "", c -> persistence(c, "config-show"));
+        query(root, "persistence backup list", "", c -> persistence(c, "backup-list"));
+        query(root, "persistence backup save", "backup", c -> CompletableFuture.completedFuture(localized(c, "cli.persistence.offline_save", CommandArguments.string(c, "backup"))));
+        query(root, "persistence snapshot load", "backup", c -> CompletableFuture.completedFuture(localized(c, "cli.persistence.offline_load", CommandArguments.string(c, "backup"))));
+        query(root, "persistence wal save", "backup", c -> CompletableFuture.completedFuture(localized(c, "cli.persistence.offline_wal", CommandArguments.string(c, "backup"))));
+        query(root, "persistence wal load", "backup", c -> CompletableFuture.completedFuture(localized(c, "cli.persistence.offline_load", CommandArguments.string(c, "backup"))));
+        mutation(root, "persistence snapshot save", "storage-snapshot", "");
+        mutation(root, "persistence config set", "storage-config", "storageField storageValue");
         query(root, "exchange status", "", this::status);
         query(root, "exchange audit", "", c -> CapitalMC.exchange.audit().report(64).thenCompose(r -> GameServices.get().onServer(() -> localized(c, "cli.audit", r.conserved(), r.consistent(), r.checkedAccounts(), r.checkedOrders(), r.checkedPositions(), r.issueCount()) + r.issues().stream().map(i -> "\n&c" + i).collect(Collectors.joining()))));
     }
@@ -216,6 +231,37 @@ public class AdminCommand extends BaseCommand
             return Commands.argument(name, IntegerArgumentType.integer(name.equals("page") ? 1 : 0, name.equals("page") ? 100 : 18));
         }
         var node = CommandArguments.text(name);
+        if (name.equals("storageField"))
+        {
+            return node.suggests((c, b) -> SharedSuggestionProvider.suggest(PersistenceAdministration.FIELDS, b));
+        }
+        if (name.equals("storageValue"))
+        {
+            return node.suggests((c, b) -> {
+                String value = switch (CommandArguments.string(c, "storageField"))
+                {
+                    case "directory" -> "persistence";
+                    case "exchangeSnapshotEverySequences" -> "10000";
+                    case "exchangeRetainedSnapshots", "metadataRetainedSnapshots" -> "2";
+                    case "flushEveryCommands" -> "256";
+                    case "flushIntervalMilliseconds" -> "10";
+                    case "metadataSnapshotEverySequences" -> "128";
+                    case "metadataSnapshotWalBytes" -> "4194304";
+                    default -> "1";
+                };
+                return SharedSuggestionProvider.suggest(List.of(value), b);
+            });
+        }
+        if (name.equals("backup"))
+        {
+            return node.suggests((c, b) -> {
+                var request = new JsonObject();
+                request.addProperty("action", "backup-list");
+                return CapitalMC.runtime.backend.call(BackendClient.PERSISTENCE, request).thenCompose(value ->
+                        SharedSuggestionProvider.suggest(value.getAsJsonObject().getAsJsonArray("files").asList().stream().map(v -> v.getAsString()), b))
+                        .exceptionally(error -> b.build());
+            });
+        }
         if (Set.of("asset", "base", "quote").contains(name))
         {
             return node.suggests(CommandArguments.ASSETS);
@@ -301,7 +347,11 @@ public class AdminCommand extends BaseCommand
             String actor = player == null ? "console:" + c.getSource().getTextName() : player.getUUID().toString();
             CompletableFuture<?> work = action.startsWith("source-") ? sources(c, action, args, held, actor, reason)
                     : GameServices.get().administration.action(action, args, held, actor, reason, () -> canUse(c.getSource()) && (player == null || !player.hasDisconnected()));
-            return observe(c, work.thenCompose(value -> GameServices.get().onServer(() -> localized(c, "cli.admin.done", path, value instanceof Symbol s ? "#" + s.id() : value instanceof McAssetRegistry.Asset a ? a.name() + " #" + a.id() : reason))));
+            return observe(c, work.thenCompose(value -> GameServices.get().onServer(() -> {
+                String message = localized(c, "cli.admin.done", path, value instanceof Symbol s ? "#" + s.id()
+                        : value instanceof McAssetRegistry.Asset a ? a.name() + " #" + a.id() : reason);
+                return action.equals("storage-config") ? message + "\n" + localized(c, "cli.persistence.restart") : message;
+            })));
         }));
     }
 
@@ -470,6 +520,29 @@ public class AdminCommand extends BaseCommand
             var value = entry.getValue().getAsJsonObject();
             return "&e" + entry.getKey() + " &7" + List.of("action", "type", "phase", "status", "operator", "actor", "reason").stream().filter(value::has).map(k -> k + ": " + value.get(k).getAsString()).collect(Collectors.joining(" | "));
         }).collect(Collectors.joining("\n")));
+    }
+
+    private CompletableFuture<String> persistence(CommandContext<CommandSourceStack> c, String action)
+    {
+        var request = new JsonObject();
+        request.addProperty("action", action);
+        return CapitalMC.runtime.backend.call(BackendClient.PERSISTENCE, request).thenCompose(value -> GameServices.get().onServer(() -> {
+            var response = value.getAsJsonObject();
+            if (action.equals("flush"))
+                return localized(c, "cli.persistence.flushed", response.get("sequence").getAsLong(), response.get("durableThrough").getAsLong());
+            if (action.equals("verify")) return localized(c, "cli.persistence.verified");
+            if (action.equals("config-show"))
+            {
+                var rows = response.getAsJsonObject("settings").entrySet().stream()
+                                   .map(entry -> "&e" + entry.getKey() + " &b" + entry.getValue().getAsString()).collect(Collectors.joining("\n"));
+                return rows + "\n" + localized(c, "cli.persistence.restart");
+            }
+            var rows = response.getAsJsonArray("files");
+            if (rows.isEmpty()) return localized(c, "ui.empty");
+            return rows.asList().stream().map(row -> row.isJsonPrimitive() ? "&b" + row.getAsString()
+                    : localized(c, "cli.persistence.file", row.getAsJsonObject().get("path").getAsString(), row.getAsJsonObject().get("bytes").getAsLong()))
+                       .collect(Collectors.joining("\n"));
+        }));
     }
 
     private CompletableFuture<String> status(CommandContext<CommandSourceStack> c)

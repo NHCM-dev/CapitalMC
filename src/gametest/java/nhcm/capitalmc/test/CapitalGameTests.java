@@ -424,8 +424,9 @@ public final class CapitalGameTests
             check(gui.getGuiElement(14).getItemStackForDisplay(gui).is(Items.PAPER), "Statistics icon is not paper");
             for (int slot = 28; slot <= 30; slot++)
                 check(!gui.getGuiElement(slot).getItemStackForDisplay(gui).hasFoil(), "Unselected quantity button glowed");
+            gui.tick();
             click(gui, 29);
-            gui.refresh();
+            gui.tick();
             for (int slot = 28; slot <= 30; slot++)
             {
                 check(gui.getGuiElement(slot).getItemStackForDisplay(gui).hasFoil() == (slot == 29), "Wrong quantity fraction glowed");
@@ -436,7 +437,7 @@ public final class CapitalGameTests
                      .lines().stream().anyMatch(line -> line.getString().contains("Quantity: 5")), "Half quantity click did not fill the ticket");
             check(gui.getGuiElement(21).getItemStackForDisplay(gui).is(Items.ENDER_CHEST), "Isolated icon is incorrect");
             click(gui, 21);
-            gui.refresh();
+            gui.tick();
             check(gui.getGuiElement(21).getItemStackForDisplay(gui).is(Items.CHEST), "Cross icon is incorrect");
             for (int slot = 0; slot < 4; slot++)
             {
@@ -445,6 +446,14 @@ public final class CapitalGameTests
             }
             check(gui.getGuiElement(0).getItemStackForDisplay(gui).hasFoil(), "Open long is not selected");
             click(gui, 11);
+            gui.tick();
+            check(gui.getGuiElement(11).getItemStackForDisplay(gui).hasFoil(), "Market mode did not refresh after clicking");
+            check(!gui.getGuiElement(10).getItemStackForDisplay(gui).hasFoil(), "Limit mode remained selected");
+            click(gui, 10);
+            gui.tick();
+            check(gui.getGuiElement(10).getItemStackForDisplay(gui).hasFoil(), "Limit mode did not refresh after clicking");
+            click(gui, 11);
+            gui.tick();
             click(gui, 4);
             check(CapitalMC.guiInputManager.isPaused(test.player.getUUID()), "Empty book click did not request a limit price");
             check(!chat(test.player, "110"), "Book price input broadcast");
@@ -1755,6 +1764,88 @@ public final class CapitalGameTests
         return ServerMessageEvents.ALLOW_CHAT_MESSAGE.invoker().allowChatMessage(
                 PlayerChatMessage.unsigned(player.getUUID(), text), player,
                 ChatType.bind(ChatType.CHAT, player));
+    }
+
+    @GameTest(maxTicks = 2400)
+    public void navigationButtonsRefreshWithoutReopening(GameTestHelper helper)
+    {
+        var test = new Steps(helper);
+        test.add(CapitalGameTests::testAssets);
+        test.add(() -> {
+            test.player = survivalPlayer(helper);
+            test.player.level().getServer().getPlayerList().op(new NameAndId(test.player.getGameProfile()),
+                                                               Optional.of(LevelBasedPermissionSet.OWNER), Optional.of(false));
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            gui.showPage(PageType.ADMIN);
+            gui.open();
+            gui.tick();
+            for (int round = 0; round < 2; round++)
+            {
+                for (int tab = 0; tab < 6; tab++)
+                {
+                    click(gui, tab);
+                    gui.tick();
+                    for (int slot = 0; slot < 6; slot++)
+                    {
+                        check(gui.getGuiElement(slot).getItemStackForDisplay(gui).hasFoil() == (slot == tab),
+                              "Admin tab did not refresh without reopening: " + tab);
+                    }
+                    check(gui.isOpen(), "Admin tab closed the GUI");
+                    for (int slot = 9; slot < 18; slot++)
+                        check(gui.getGuiElement(slot).getItemStackForDisplay(gui).is(Items.STAINED_GLASS_PANE.gray()),
+                              "Admin separator disappeared after navigation");
+                }
+            }
+            click(gui, 6);
+            gui.tick();
+            check(gui.getCurrentPage() == PageType.TRADING_SETTINGS, "Settings navigation failed");
+            for (int round = 0; round < 2; round++)
+            {
+                for (int tab = 0; tab < 5; tab++)
+                {
+                    click(gui, tab);
+                    gui.tick();
+                    for (int slot = 0; slot < 5; slot++)
+                        check(gui.getGuiElement(slot).getItemStackForDisplay(gui).hasFoil() == (slot == tab),
+                              "Settings tab did not refresh without reopening: " + tab);
+                }
+            }
+            gui.close();
+            return CompletableFuture.completedFuture(null);
+        });
+        test.run();
+    }
+
+    @GameTest(maxTicks = 2400)
+    public void persistenceCommandsHaveHelpCompletionAndOwnerPermissions(GameTestHelper helper)
+    {
+        var test = new Steps(helper);
+        test.add(CapitalGameTests::testAssets);
+        test.add(() -> {
+            test.player = survivalPlayer(helper);
+            var source = test.player.createCommandSourceStack();
+            var dispatcher = source.getServer().getCommands().getDispatcher();
+            check(!dispatcher.getRoot().getChild("cmcadmin").canUse(source), "Persistence commands accessible to ordinary players");
+            source.getServer().getPlayerList().op(new NameAndId(test.player.getGameProfile()),
+                                                Optional.of(LevelBasedPermissionSet.OWNER), Optional.of(false));
+            source = test.player.createCommandSourceStack();
+            var persistence = dispatcher.getRoot().getChild("cmcadmin").getChild("persistence");
+            for (String branch : List.of("status", "flush", "snapshot", "wal", "verify", "config", "backup"))
+                check(persistence.getChild(branch) != null, "Missing persistence command: " + branch);
+            var player = (MessagePlayer) test.player;
+            player.messages.clear();
+            runCommand(test.player, "cmcadmin help persistence");
+            check(player.messages.stream().anyMatch(value -> value.contains("cmcadmin persistence")), "Persistence help missing");
+            return dispatcher.getCompletionSuggestions(dispatcher.parse("cmcadmin persistence config set ", source));
+        });
+        test.add(() -> {
+            var suggestions = (Suggestions) test.last;
+            check(suggestions.getList().stream().anyMatch(value -> value.getText().equals("exchangeSnapshotEverySequences")),
+                  "Snapshot interval completion missing");
+            return awaitReply(test, "WAL flushed", () -> runCommand(test.player, "cmcadmin persistence flush"));
+        });
+        test.add(() -> awaitReply(test, "consistent and conserved", () -> runCommand(test.player, "cmcadmin persistence verify")));
+        test.run();
     }
 
     private static void click(TradingGui gui, int slot)

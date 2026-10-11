@@ -329,6 +329,12 @@ public class TradingGui extends SimpleGui
         return !history.isEmpty();
     }
 
+    /** Coalesce local state changes with the next server-thread GUI update. */
+    public void requestRefresh()
+    {
+        dirty = true;
+    }
+
     public void refresh()
     {
         renderPage();
@@ -489,7 +495,7 @@ public class TradingGui extends SimpleGui
     {
         Objects.requireNonNull(action, "action");
         return new GuiElementBuilder(Objects.requireNonNull(item, "item"))
-                .setCallback((index, type, clickAction, gui) -> action.run()).build();
+                .setCallback((index, type, clickAction, gui) -> GuiActions.run(gui, action)).build();
     }
 
     public void setSlot(int slot, Item item)
@@ -583,7 +589,7 @@ public class TradingGui extends SimpleGui
     {
         Objects.requireNonNull(action, "action");
         return element(player, item, name, args, description, args)
-                .setCallback((index, type, clickAction, gui) -> action.run()).build();
+                .setCallback((index, type, clickAction, gui) -> GuiActions.run(gui, action)).build();
     }
 
     public static GuiElement button(Item item, String name, Object[] nameArgs, String description,
@@ -597,7 +603,7 @@ public class TradingGui extends SimpleGui
     {
         Objects.requireNonNull(action, "action");
         return element(player, item, name, nameArgs, description, descriptionArgs)
-                .setCallback((index, type, clickAction, gui) -> action.run()).build();
+                .setCallback((index, type, clickAction, gui) -> GuiActions.run(gui, action)).build();
     }
 
     /**
@@ -616,7 +622,7 @@ public class TradingGui extends SimpleGui
     public static GuiElement button(GuiElement source, Runnable action)
     {
         Objects.requireNonNull(action, "action");
-        return copyElement(source).setCallback((index, type, clickAction, gui) -> action.run()).build();
+        return copyElement(source).setCallback((index, type, clickAction, gui) -> GuiActions.run(gui, action)).build();
     }
 
     public static GuiElement grayGlass(GuiElement source)
@@ -710,7 +716,7 @@ public class TradingGui extends SimpleGui
     {
         Objects.requireNonNull(action, "action");
         return element(player, item, name, args, description, args)
-                .setCallback((index, type, clickAction, gui) -> action.run()).build();
+                .setCallback((index, type, clickAction, gui) -> GuiActions.run(gui, action)).build();
     }
 
     public static GuiElement button(GuiElement item, String name, Object[] nameArgs, String description,
@@ -724,7 +730,7 @@ public class TradingGui extends SimpleGui
     {
         Objects.requireNonNull(action, "action");
         return element(player, item, name, nameArgs, description, descriptionArgs)
-                .setCallback((index, type, clickAction, gui) -> action.run()).build();
+                .setCallback((index, type, clickAction, gui) -> GuiActions.run(gui, action)).build();
     }
 
     public static Component text(String keyOrText, Object... args)

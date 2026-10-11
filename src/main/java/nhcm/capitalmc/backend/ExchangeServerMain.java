@@ -6,12 +6,18 @@ import nhcm.capitalmc.service.ApplicationExecutors;
 
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
+import java.util.Arrays;
 
 /** Standalone Java 25 server; no Fabric, Minecraft, world or SGui is loaded. */
 public class ExchangeServerMain
 {
     public static void main(String[] args) throws Exception
     {
+        if (args.length > 0 && args[0].equals("--storage"))
+        {
+            PersistenceTool.main(Arrays.copyOfRange(args, 1, args.length));
+            return;
+        }
         Path directory = Path.of(args.length == 0 ? "capitalmc" : args[0]).toAbsolutePath();
         var config = NetworkConfig.load(directory.resolve("connection.json"));
         if (config.mode != NetworkConfig.Mode.LOCAL) throw new IllegalArgumentException("Standalone owner must use LOCAL mode");

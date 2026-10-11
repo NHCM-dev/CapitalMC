@@ -2,6 +2,7 @@ package nhcm.capitalmc.service;
 
 import com.google.gson.*;
 import java.io.*;
+import java.lang.ref.WeakReference;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.*;
@@ -28,6 +29,7 @@ public class BinaryStateStore
     }
 
     private static final int MAGIC = 0x434D4353, VERSION = 1, HEADER = 32, LIMIT = 256 * 1024 * 1024;
+    private static final Map<Path, WeakReference<BinaryStateStore>> writers = new WeakHashMap<>();
     private final Path directory, journal, snapshots, head;
     private final Options options;
     private JsonObject data = new JsonObject();
@@ -36,7 +38,7 @@ public class BinaryStateStore
 
     public BinaryStateStore(Path directory, Options options) throws IOException
     {
-        this.directory = directory.toAbsolutePath();
+        this.directory = directory.toAbsolutePath().normalize();
         this.options = options;
         journal = this.directory.resolve("journal.wal");
         snapshots = this.directory.resolve("snapshots");
@@ -98,8 +100,24 @@ public class BinaryStateStore
         checkpoint();
     }
 
+    /** Called on the application IO executor; reuse the writer's options and failure state. */
+    public static boolean checkpointStored(Path directory, Options options) throws IOException
+    {
+        BinaryStateStore store;
+        synchronized (writers)
+        {
+            var reference = writers.get(directory.toAbsolutePath().normalize());
+            store = reference == null ? null : reference.get();
+        }
+        if (store == null) store = new BinaryStateStore(directory, options);
+        if (!store.initialized()) return false;
+        store.checkpoint();
+        return true;
+    }
+
     public synchronized void commit(JsonObject next, JsonArray changes) throws IOException
     {
+        rememberWriter();
         if (faulted)
         {
             throw new IOException("Binary state is faulted; restart and reconcile");
@@ -217,7 +235,33 @@ public class BinaryStateStore
         }
     }
 
-    private void checkpoint() throws IOException
+    public synchronized void checkpoint() throws IOException
+    {
+        rememberWriter();
+        if (faulted) throw new IOException("Binary state is faulted; restart and reconcile");
+        try
+        {
+            writeCheckpoint();
+        }
+        catch (IOException | RuntimeException error)
+        {
+            faulted = true;
+            throw error;
+        }
+    }
+
+    private void rememberWriter()
+    {
+        synchronized (writers)
+        {
+            var reference = writers.get(directory);
+            if (reference != null && reference.get() == this) return;
+            writers.remove(directory);
+            writers.put(directory, new WeakReference<>(this));
+        }
+    }
+
+    private void writeCheckpoint() throws IOException
     {
         publish(snapshotPath(sequence), frame(sequence, BinaryValues.encode(data)));
         // The manifest is the commit point. Never fall back to an older snapshot after WAL pruning.

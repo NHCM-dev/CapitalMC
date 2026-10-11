@@ -968,5 +968,16 @@
   "ui.data.version_warning": "&cCapitalMC 数据版本警告",
   "ui.data.version_details": "&7来源：&e%s\n&7记录版本：&c%s\n&7运行版本：&b%s",
   "ui.data.version_unknown": "未知（旧数据或缺少版本记录）",
-  "ui.data.version_hint": "&e请备份数据并检查兼容性及恢复日志，请勿直接重置账本"
+  "ui.data.version_hint": "&e请备份数据并检查兼容性及恢复日志，请勿直接重置账本",
+  "cli.topic.persistence": "快照、WAL、持久化与恢复",
+  "cli.persistence.file": "&b%s &7— &e%s 字节",
+  "cli.persistence.flushed": "&aWAL 已刷盘。&7当前序列：&b%s &7| 已持久化至：&b%s",
+  "cli.persistence.verified": "&a元数据快照和 WAL 校验加载通过；当前原生账本审计一致且资金守恒。",
+  "cli.persistence.audit_failed": "账本审计异常。请恢复完整备份后再继续。",
+  "cli.persistence.restart": "&e配置在后台重启后生效；存储位置文件会固定已有数据位置。间隔单位：序列数/毫秒；WAL 上限：字节。",
+  "cli.persistence.offline_save": "&e先停后台和各网关，在后台机器执行：\n&bjava -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage backup-save <数据目录> %s\n&7包含账户元数据、快照及 WAL；Minecraft 世界需另行备份。",
+  "cli.persistence.offline_load": "&e先停后台和各网关，在后台机器恢复到新目录：\n&bjava -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage load <数据目录> %s <新的数据目录>\n&7完整备份和重放验证通过后才发布新目录，不覆盖在线数据。启用前需恢复匹配的世界和托管状态。",
+  "ui.admin.action.storage-snapshot": "保存原生和元数据快照",
+  "ui.admin.action.storage-config": "配置持久化",
+  "cli.persistence.offline_wal": "&e先停后台和各网关，在后台机器执行：\n&bjava -jar CapitalMC-0.5.1-SNAPSHOT-exchange-server.jar --storage wal-save <数据目录> %s\n&7包含账户元数据、快照及 WAL；Minecraft 世界需另行备份。"
 }

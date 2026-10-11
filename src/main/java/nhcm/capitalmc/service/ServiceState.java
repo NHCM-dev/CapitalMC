@@ -92,6 +92,10 @@ public class ServiceState
                 recover(); // Read-only legacy import, including its adjacent WAL.
                 binary.importState(data, sequence);
             }
+            else if (!binary.initialized())
+            {
+                binary.importState(new JsonObject(), 0);
+            }
             data = binary.snapshot();
             sequence = binary.sequence();
             durableData = data;

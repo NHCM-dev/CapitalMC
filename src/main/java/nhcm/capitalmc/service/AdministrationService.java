@@ -8,6 +8,7 @@ import nhcm.advmatch.command.persistence.Checkpoint;
 import nhcm.advmatch.command.persistence.Flush;
 import nhcm.advmatch.model.*;
 import nhcm.capitalmc.CapitalMC;
+import nhcm.capitalmc.backend.BackendClient;
 import nhcm.capitalmc.exchange.SymbolUtil;
 
 import java.math.BigDecimal;
@@ -192,7 +193,8 @@ public class AdministrationService
             case "reserve-in", "reserve-out" -> 3;
             case "ban", "unban" -> 1;
             case "balance-add", "balance-remove" -> 4;
-            case "checkpoint" -> 0;
+            case "checkpoint", "storage-snapshot" -> 0;
+            case "storage-config" -> 2;
             case "symbol" -> -1;
             default -> throw new IllegalArgumentException("Unsupported administration action: " + action);
         };
@@ -486,6 +488,17 @@ public class AdministrationService
                 long mark = base.units().parsePrice(a[4], quote.units());
                 var spec = a.length > 5 ? patch(new ContractSpec(), a[5], ContractSpec.class) : new ContractSpec();
                 return a[0].equalsIgnoreCase("future") ? services.markets.createFuture(a[1], base.id(), quote.id(), mark, spec, true) : a[0].equalsIgnoreCase("perpetual") ? services.markets.createPerpetual(a[1], base.id(), quote.id(), mark, spec, true) : CompletableFuture.failedFuture(new IllegalArgumentException("Unknown symbol type"));
+            }
+            case "storage-snapshot", "storage-config" ->
+            {
+                var request = new JsonObject();
+                request.addProperty("action", action.equals("storage-snapshot") ? "snapshot-save" : "config-set");
+                if (action.equals("storage-config"))
+                {
+                    request.addProperty("field", a[0]);
+                    request.addProperty("value", a[1]);
+                }
+                return CapitalMC.runtime.backend.call(BackendClient.PERSISTENCE, request);
             }
             case "checkpoint" ->
             {

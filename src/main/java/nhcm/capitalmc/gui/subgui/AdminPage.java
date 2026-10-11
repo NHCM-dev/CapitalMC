@@ -518,6 +518,7 @@ public class AdminPage extends BaseSubGui
                 auditing = true;
                 CapitalMC.exchange.audit().report(64).whenComplete((report, error) -> services.server.execute(() -> {
                     auditing = false;
+                    gui.requestRefresh();
                     if (gui.getPlayer().hasDisconnected() || !gui.getPlayer().permissions().hasPermission(Permissions.COMMANDS_OWNER))
                     {
                         return;
