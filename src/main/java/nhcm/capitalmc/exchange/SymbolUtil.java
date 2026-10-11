@@ -39,8 +39,18 @@ public class SymbolUtil
 
     public static CompletableFuture<List<SymbolView>> allSymbols()
     {
-        return QueryUtil.shared("symbols", 50_000_000L,
-                                () -> QueryUtil.all(query -> QueryUtil.exchange().symbols().list(query.withIncludeInactive(true))));
+        var query = new ObservationQuery().withKind(ReadKind.Symbols).withIncludeInactive(true);
+        return QueryUtil.liveList(query, SymbolView.class, q -> QueryUtil.exchange().symbols().list(q.withIncludeInactive(true)));
+    }
+
+    public static CompletableFuture<List<SymbolView>> allSymbolsFresh()
+    {
+        return QueryUtil.all(query -> QueryUtil.exchange().symbols().list(query.withIncludeInactive(true)));
+    }
+
+    public static CompletableFuture<List<SymbolView>> findByNameFresh(String name)
+    {
+        return allSymbolsFresh().thenApply(values -> values.stream().filter(value -> name.equals(value.name())).toList());
     }
 
     public static CompletableFuture<List<SymbolView>> findByName(String name)
@@ -104,10 +114,14 @@ public class SymbolUtil
     {
         return QueryUtil.shared("stats:" + symbolId, 500_000_000L, () -> {
             var exchange = QueryUtil.exchange();
-            var trades = QueryUtil.all(q -> exchange.submit(new ReadTrades(q.withSymbolId(symbolId))));
-            var bids = QueryUtil.all(q -> exchange.submit(new ReadDepth(q.withSymbolId(symbolId).withSide(OrderSide.Bid))));
-            var asks = QueryUtil.all(q -> exchange.submit(new ReadDepth(q.withSymbolId(symbolId).withSide(OrderSide.Ask))));
-            CompletableFuture<MarketView> market = contract ? exchange.contracts().market(exchange.symbols().get(symbolId)) : CompletableFuture.completedFuture(null);
+            var query = new ObservationQuery().withSymbolId(symbolId);
+            var trades = QueryUtil.liveList(query.withKind(ReadKind.Trades), TradeView.class, q -> exchange.submit(new ReadTrades(q.withSymbolId(symbolId))));
+            var bids = QueryUtil.liveList(query.withKind(ReadKind.Depth).withSide(OrderSide.Bid), DepthView.class,
+                                         q -> exchange.submit(new ReadDepth(q.withSymbolId(symbolId).withSide(OrderSide.Bid))));
+            var asks = QueryUtil.liveList(query.withKind(ReadKind.Depth).withSide(OrderSide.Ask), DepthView.class,
+                                         q -> exchange.submit(new ReadDepth(q.withSymbolId(symbolId).withSide(OrderSide.Ask))));
+            CompletableFuture<MarketView> market = contract ? QueryUtil.liveRows(query.withKind(ReadKind.Market).withLimit(1), MarketView.class)
+                                                                     .thenApply(response -> QueryUtil.one(response).orElseThrow()) : CompletableFuture.completedFuture(null);
             return trades.thenCombine(market, (t, m) -> new Snapshot(t, m, null))
                          .thenCombine(bids.thenCombine(asks, Depth::new), (s, d) -> new Snapshot(s.trades, s.contract, d));
         });
@@ -117,8 +131,9 @@ public class SymbolUtil
     {
         QueryUtil.positive(symbolId);
         return QueryUtil.shared("depth:" + symbolId, 50_000_000L, () -> {
-            var book = QueryUtil.exchange().symbols().get(symbolId).book();
-            return book.depth(OrderSide.Bid, 5).thenCombine(book.depth(OrderSide.Ask, 5), (b, a) -> {
+            var query = new ObservationQuery().withKind(ReadKind.Depth).withSymbolId(symbolId).withLimit(5);
+            return QueryUtil.liveRows(query.withSide(OrderSide.Bid), DepthView.class)
+                            .thenCombine(QueryUtil.liveRows(query.withSide(OrderSide.Ask), DepthView.class), (b, a) -> {
                 if (b.page().state() != ReadState.Success)
                 {
                     throw new BusinessException(b.page());

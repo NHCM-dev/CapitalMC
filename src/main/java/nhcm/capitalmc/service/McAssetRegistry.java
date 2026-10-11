@@ -7,6 +7,7 @@ import net.minecraft.world.item.*;
 import nhcm.advmatch.model.AssetView;
 import nhcm.capitalmc.CapitalMC;
 import nhcm.capitalmc.exchange.AssetUtil;
+import nhcm.capitalmc.backend.BindingProof;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -113,6 +114,7 @@ public class McAssetRegistry
                 synchronized (this)
                 {
                     assets.put(id, next);
+                    refreshBindingProof(id);
                 }
                 return (Void) null;
             })).whenComplete((unused, error) -> {
@@ -132,6 +134,24 @@ public class McAssetRegistry
     private final Map<String, ItemStack> registeringTemplates = new HashMap<>();
     private final Map<String, Registration> registrationArguments = new HashMap<>();
     private final Map<Long, ItemStack> editingTemplates = new HashMap<>();
+    private final Map<Long, JsonObject> bindingProofs = new HashMap<>();
+
+    public synchronized JsonObject bindingProof(Collection<Long> ids)
+    {
+        var result = new JsonObject();
+        for (long id : ids)
+        {
+            var proof = bindingProofs.get(id);
+            if (proof == null) throw new IllegalStateException("ui.custody.binding_changed");
+            result.add(Long.toString(id), proof.deepCopy());
+        }
+        return result;
+    }
+
+    private void refreshBindingProof(long id)
+    {
+        bindingProofs.put(id, BindingProof.asset(services.state.snapshot(), id));
+    }
 
     private record Registration(String displayName, int scale, boolean electronic, ItemStack prototype)
     {
@@ -188,12 +208,17 @@ public class McAssetRegistry
 
     public CompletableFuture<Void> initialize()
     {
-        JsonObject root = services.state.snapshot();
         return AssetUtil.allAssetsFresh().thenCompose(backend -> services.onServer(() -> {
+                            if (editing()) throw new IllegalStateException("ui.operation.busy");
+                            JsonObject root = services.state.snapshot();
+                            Map<Long, Asset> refreshedAssets = new HashMap<>();
+                            Set<Long> refreshedDisabled = new HashSet<>();
+                            Set<Long> refreshedUnbound = new HashSet<>();
+                            Map<Long, JsonObject> refreshedProofs = new HashMap<>();
                             for (var view : backend)
                             {
-                                assets.put(view.assetId(), new Asset(view.assetId(), view.assetName(), view.displayName(), view.scale(), true, new ItemStack(Items.PAPER)));
-                                unbound.add(view.assetId());
+                                refreshedAssets.put(view.assetId(), new Asset(view.assetId(), view.assetName(), view.displayName(), view.scale(), true, new ItemStack(Items.PAPER)));
+                                refreshedUnbound.add(view.assetId());
                             }
                             if (root.has("assets"))
                             {
@@ -209,11 +234,12 @@ public class McAssetRegistry
                                     }
                                     ItemStack item = ItemStack.CODEC.parse(services.server.registryAccess().createSerializationContext(JsonOps.INSTANCE), entry.get("item"))
                                                                     .getOrThrow();
-                                    assets.put(id, new Asset(id, view.assetName(), entry.get("displayName").getAsString(), view.scale(), entry.get("electronic").getAsBoolean(), item));
-                                    unbound.remove(id);
+                                    refreshedAssets.put(id, new Asset(id, view.assetName(), entry.get("displayName").getAsString(), view.scale(), entry.get("electronic").getAsBoolean(), item));
+                                    refreshedUnbound.remove(id);
+                                    refreshedProofs.put(id, BindingProof.asset(root, id));
                                     if (entry.has("enabled") && !entry.get("enabled").getAsBoolean())
                                     {
-                                        disabled.add(id);
+                                        refreshedDisabled.add(id);
                                     }
                                 }
                             }
@@ -222,18 +248,34 @@ public class McAssetRegistry
                                 for (var entry : root.getAsJsonObject("assetUnits").entrySet())
                                 {
                                     long id = Long.parseLong(entry.getKey());
-                                    var previous = assets.get(id);
+                                    var previous = refreshedAssets.get(id);
                                     if (previous == null)
                                     {
                                         throw new IllegalStateException("Unit configuration references an unknown asset");
                                     }
                                     var settings = entry.getValue().getAsJsonObject();
-                                    assets.put(id, new Asset(id, previous.name(), previous.displayName(), previous.scale(), previous.electronic(), previous.prototype(),
+                                    refreshedAssets.put(id, new Asset(id, previous.name(), previous.displayName(), previous.scale(), previous.electronic(), previous.prototype(),
                                                              new BigDecimal(settings.get("size").getAsString()), settings.get("minimumDeposit").getAsLong(), settings.get("minimumWithdrawal").getAsLong()));
                                 }
                             }
+                            synchronized (McAssetRegistry.this)
+                            {
+                                assets.clear();
+                                assets.putAll(refreshedAssets);
+                                disabled.clear();
+                                disabled.addAll(refreshedDisabled);
+                                unbound.clear();
+                                unbound.addAll(refreshedUnbound);
+                                bindingProofs.clear();
+                                bindingProofs.putAll(refreshedProofs);
+                            }
                             return null;
                         }));
+    }
+
+    public synchronized boolean editing()
+    {
+        return !editingTemplates.isEmpty();
     }
 
     public CompletableFuture<Asset> registerItem(String name, String displayName, ItemStack prototype)
@@ -323,6 +365,7 @@ public class McAssetRegistry
                 synchronized (McAssetRegistry.this)
                 {
                     assets.put(id, asset);
+                    refreshBindingProof(id);
                     unbound.remove(id);
                 }
                 return asset;
@@ -414,6 +457,7 @@ public class McAssetRegistry
                 synchronized (this)
                 {
                     assets.put(id, next);
+                    refreshBindingProof(id);
                     unbound.remove(id);
                     if (enabled)
                     {

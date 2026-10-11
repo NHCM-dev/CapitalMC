@@ -76,7 +76,24 @@ public class MarketService
 
     public CompletableFuture<Void> initialize()
     {
+        return reload().thenCompose(unused -> SymbolUtil.allSymbols().thenCompose(symbols -> {
+            CompletableFuture<Void> migration = CompletableFuture.completedFuture(null);
+            for (var symbol : symbols)
+            {
+                if (symbol.type() != SymbolType.Spot)
+                {
+                    migration = migration.thenCompose(ignored -> enableTickBand(symbol));
+                }
+            }
+            return migration;
+        }));
+    }
+
+    public CompletableFuture<Void> reload()
+    {
         return services.onServer(() -> {
+            lots.clear();
+            icons.clear();
             var root = services.state.snapshot();
             if (root.has("symbolLots"))
             {
@@ -96,20 +113,24 @@ public class MarketService
                     icons.put(Long.parseLong(entry.getKey()), ItemStack.CODEC.parse(services.server.registryAccess().createSerializationContext(JsonOps.INSTANCE), entry.getValue()).getOrThrow());
             }
             return null;
-        }).thenCompose(unused -> SymbolUtil.allSymbols().thenCompose(symbols -> {
-            CompletableFuture<Void> migration = CompletableFuture.completedFuture(null);
-            for (var symbol : symbols)
-            {
-                if (symbol.type() != SymbolType.Spot)
-                {
-                    migration = migration.thenCompose(ignored -> enableTickBand(symbol));
-                }
-            }
-            return migration;
-        }));
+        });
     }
 
     private CompletableFuture<Void> enableTickBand(SymbolView symbol)
+    {
+        return enableTickBand(symbol, false);
+    }
+
+    private CompletableFuture<Void> enableTickBand(SymbolView symbol, boolean leaseOwned)
+    {
+        if (symbol.type() == SymbolType.Spot) return CompletableFuture.completedFuture(null);
+        if (leaseOwned) return enableTickBandLeased(symbol);
+        return CapitalMC.runtime.backend.exclusive("configuration", () -> services.state.refreshShared()
+                .thenCompose(changed -> CapitalMC.exchange.symbols().get(symbol.symbolId()).snapshot())
+                .thenCompose(this::enableTickBandLeased));
+    }
+
+    private CompletableFuture<Void> enableTickBandLeased(SymbolView symbol)
     {
         if (symbol.type() == SymbolType.Spot)
         {
@@ -138,7 +159,7 @@ public class MarketService
             {
                 return CompletableFuture.completedFuture(null);
             }
-            return services.administration.perform("capitalmc/migration", "Enable one-tick minimum contract price band", "tick-band-migration",
+            return services.administration.performLeased("capitalmc/migration", "Enable one-tick minimum contract price band", "tick-band-migration",
                                                    new JsonPrimitive(symbol.symbolId()), () -> CapitalMC.exchange.rules().configure(CapitalMC.exchange.symbols().get(symbol.symbolId()),
                                                                                                                                     symbol.tradingRules().withTickAwarePriceBand(true))).thenApply(receipt -> null);
         });
@@ -186,10 +207,15 @@ public class MarketService
 
     public CompletableFuture<Symbol> createSpot(String name, long base, long quote)
     {
-        return create(name, SymbolType.Spot, base, quote, 0, null);
+        return create(name, SymbolType.Spot, base, quote, 0, null, false);
     }
 
     public CompletableFuture<Symbol> createPerpetual(String name, long base, long quote, long mark, ContractSpec spec)
+    {
+        return createPerpetual(name, base, quote, mark, spec, false);
+    }
+
+    CompletableFuture<Symbol> createPerpetual(String name, long base, long quote, long mark, ContractSpec spec, boolean leaseOwned)
     {
         if (mark <= 0)
         {
@@ -200,19 +226,24 @@ public class MarketService
         {
             spec = spec.withFirstFundingTimestamp(Math.addExact(System.currentTimeMillis(), spec.fundingInterval()));
         }
-        return create(name, SymbolType.Perpetual, base, quote, mark, spec);
+        return create(name, SymbolType.Perpetual, base, quote, mark, spec, leaseOwned);
     }
 
     public CompletableFuture<Symbol> createFuture(String name, long base, long quote, long mark, ContractSpec spec)
+    {
+        return createFuture(name, base, quote, mark, spec, false);
+    }
+
+    CompletableFuture<Symbol> createFuture(String name, long base, long quote, long mark, ContractSpec spec, boolean leaseOwned)
     {
         if (mark <= 0 || spec.expiryTimestamp() <= System.currentTimeMillis())
         {
             throw new IllegalArgumentException("Future requires a positive mark and future expiry");
         }
-        return create(name, SymbolType.Future, base, quote, mark, spec);
+        return create(name, SymbolType.Future, base, quote, mark, spec, leaseOwned);
     }
 
-    private CompletableFuture<Symbol> create(String name, SymbolType type, long base, long quote, long mark, ContractSpec spec)
+    private CompletableFuture<Symbol> create(String name, SymbolType type, long base, long quote, long mark, ContractSpec spec, boolean leaseOwned)
     {
         if (base == quote || name.isBlank())
         {
@@ -228,7 +259,7 @@ public class MarketService
         {
             return CompletableFuture.failedFuture(new IllegalStateException("ui.operation.busy"));
         }
-        var work = SymbolUtil.findByName(name).thenCompose(existing -> {
+        var work = SymbolUtil.findByNameFresh(name).thenCompose(existing -> {
                                  if (!existing.isEmpty())
                                  {
                                      if (existing.size() != 1 || existing.getFirst().baseAssetId() != base || existing.getFirst().quoteAssetId() != quote || existing.getFirst().type() != type)
@@ -254,11 +285,11 @@ public class MarketService
                                  {
                                      return CompletableFuture.completedFuture(symbol);
                                  }
-                                 return SymbolUtil.allSymbols().thenCompose(all -> {
+                                 return SymbolUtil.allSymbolsFresh().thenCompose(all -> {
                                      var spot = all.stream().filter(s -> s.active() && s.type() == SymbolType.Spot && s.baseAssetId() == base && s.quoteAssetId() == quote).findFirst();
                                      return spot.isEmpty() ? CompletableFuture.completedFuture(symbol) : CapitalMC.exchange.contracts().bindSpot(symbol, CapitalMC.exchange.symbols().get(spot.get().symbolId())).thenApply(receipt -> symbol);
                                  });
-                             }).thenCompose(symbol -> symbol.snapshot().thenCompose(this::enableTickBand).thenApply(unused -> symbol))
+                             }).thenCompose(symbol -> symbol.snapshot().thenCompose(view -> enableTickBand(view, leaseOwned)).thenApply(unused -> symbol))
                              .thenCompose(symbol -> CapitalMC.exchange.submit(new Flush()).thenApply(status -> {
                                  if (!status.enabled() || status.faulted() || status.durableThrough() < status.sequence())
                                  {
@@ -274,6 +305,7 @@ public class MarketService
      */
     public void tick()
     {
+        if (CapitalMC.runtime != null) return; // The shared owner runs maintenance once for all gateways.
         if (updating || !services.ready().isDone() || services.ready().isCompletedExceptionally())
         {
             return;

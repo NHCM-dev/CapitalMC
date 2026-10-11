@@ -1135,6 +1135,7 @@ public class ItemBankService
         JsonObject values = new JsonObject();
         amounts.forEach((asset, amount) -> values.addProperty(asset.toString(), amount));
         op.add("amounts", values);
+        op.add("bindings", services.assets.bindingProof(amounts.keySet()));
         op.add("recovery", recovery.deepCopy());
         return op;
     }

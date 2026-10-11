@@ -3,9 +3,11 @@ package nhcm.capitalmc.exchange;
 import net.minecraft.server.level.ServerPlayer;
 import nhcm.advmatch.model.*;
 import nhcm.capitalmc.gui.TradingGui;
+import nhcm.capitalmc.i18n.I18n;
 import nhcm.capitalmc.service.*;
 
 import java.util.List;
+import java.math.BigInteger;
 
 /**
  * Human decimal formatting shared by CLI and administrator investigations.
@@ -18,6 +20,35 @@ public class FinancialText
     }
 
     public static String row(Object row, List<SymbolView> markets, ServerPlayer player)
+    {
+        long symbolId = 0;
+        long recordId = 0;
+        if (row instanceof OrderView order)
+        {
+            symbolId = order.symbolId();
+            recordId = order.orderId();
+        }
+        else if (row instanceof PositionView position)
+        {
+            symbolId = position.symbolId();
+            recordId = position.positionId();
+        }
+        else if (row instanceof TradeView trade)
+        {
+            symbolId = trade.symbolId();
+            recordId = trade.recordId();
+        }
+        for (var symbol : markets)
+        {
+            if (symbol.symbolId() == symbolId)
+            {
+                return "&b" + symbol.name() + " &7#" + recordId + "\n" + lore(row, markets, player);
+            }
+        }
+        return lore(row, markets, player);
+    }
+
+    public static String lore(Object row, List<SymbolView> markets, ServerPlayer player)
     {
         if (row instanceof BalanceView balance)
         {
@@ -58,16 +89,56 @@ public class FinancialText
         }
         if (row instanceof OrderView order)
         {
-            return text(player, "ui.financial.order", symbol.name(), order.orderId(), order.side(), order.type(), order.timeInForce(),
-                        base.units().price(order.price(), quote.units()), quote.displayName(), quantity.format(order.filling().unfilled()), quantityName, order.filling().status());
+            String result = text(player, "ui.activity.order_details", order.side(), order.type(), order.timeInForce(),
+                                 order.type() == OrderType.Market ? text(player, "ui.enum.OrderType.Market") : price(symbol, order.price()),
+                                 quantity(symbol, order.quantity(), player), quantity(symbol, order.filling().unfilled(), player), order.filling().status());
+            if (symbol.type() != SymbolType.Spot)
+            {
+                result += "\n" + text(player, "ui.activity.order_contract", order.positionId(), order.leverage(), order.marginMode() == null ? "—" : order.marginMode(), order.reduceOnly());
+            }
+            return result;
         }
         if (row instanceof PositionView position)
         {
-            return text(player, "ui.financial.position", symbol.name(), position.positionId(), position.side(), quantity.format(position.size()), quantityName,
-                        base.units().price(position.averageEntryPrice(), quote.units()), quote.format(position.realizedPnL()), quote.format(position.unrealizedPnL()), quote.displayName(), position.leverage(), position.marginMode());
+            String liquidation = position.marginMode() == MarginMode.Cross ? text(player, "ui.activity.cross_liquidation")
+                    : position.predictedLiquidationPrice() <= 0 ? text(player, "ui.activity.no_liquidation") : price(symbol, position.predictedLiquidationPrice());
+            String result = text(player, "ui.activity.position_details", position.side(), quantity(symbol, position.size(), player),
+                                 price(symbol, position.averageEntryPrice()), liquidation, pnl(position.unrealizedPnL(), quote), pnl(position.realizedPnL(), quote), position.leverage(), position.marginMode());
+            result += "\n" + text(player, "ui.activity.exposure", base.units().format(BigInteger.valueOf(position.size()).multiply(BigInteger.valueOf(position.contractMultiplier()))), base.displayName());
+            if (!position.managed() && !position.closed() && position.size() > 0)
+            {
+                result += "\n" + text(player, "ui.activity.unmanaged");
+            }
+            return result;
         }
         var trade = (TradeView) row;
-        return text(player, "ui.financial.trade", symbol.name(), trade.recordId(), base.units().price(trade.trade().price(), quote.units()), quote.displayName(), quantity.format(trade.trade().quantity()), quantityName, trade.timestamp());
+        return text(player, "ui.activity.trade_details", price(symbol, trade.trade().price()), quantity(symbol, trade.trade().quantity(), player), trade.timestamp(), trade.trade().makerOrderId(), trade.trade().takerOrderId());
+    }
+
+    public static String price(SymbolView symbol, long raw)
+    {
+        var base = asset(symbol.baseAssetId());
+        var quote = asset(symbol.quoteAssetId());
+        return base.units().price(raw, quote.units()) + " " + quote.displayName() + " / 1 " + base.displayName();
+    }
+
+    public static String quantity(SymbolView symbol, long raw, ServerPlayer player)
+    {
+        String name = GameServices.get().markets.lotSize(symbol.symbolId()) == 0 ? asset(symbol.baseAssetId()).displayName()
+                : text(player, symbol.type() == SymbolType.Spot ? "ui.lot.spot" : "ui.lot.contract");
+        return GameServices.get().markets.quantityUnits(symbol).format(raw) + " " + name;
+    }
+
+    private static String pnl(long raw, McAssetRegistry.Asset quote)
+    {
+        return (raw > 0 ? "&a+" : raw < 0 ? "&c" : "&7") + quote.format(raw) + " " + quote.displayName() + "&7";
+    }
+
+    public static String direction(Enum<?> value, String label)
+    {
+        boolean positive = value == PositionSide.Long || value == OrderSide.Bid || value == ConditionalOrderKind.TakeProfit || value == OrderStatus.Filled;
+        boolean negative = value == PositionSide.Short || value == OrderSide.Ask || value == ConditionalOrderKind.StopLoss || value == OrderStatus.Rejected;
+        return (positive ? "&a" : negative ? "&c" : "&e") + label + "&7";
     }
 
     private static String text(ServerPlayer player, String key, Object... args)
@@ -76,14 +147,14 @@ public class FinancialText
         {
             if (args[i] instanceof Enum<?> value)
             {
-                args[i] = ExchangeMessages.label(player, value);
+                args[i] = direction(value, ExchangeMessages.label(player, value));
             }
             else if (args[i] instanceof Boolean value)
             {
                 args[i] = TradingGui.text(player, "ui.boolean." + value).getString();
             }
         }
-        return TradingGui.text(player, key, args).getString();
+        return I18n.format(player == null ? null : player.clientInformation().language(), key, args);
     }
 
     private static McAssetRegistry.Asset asset(long id)

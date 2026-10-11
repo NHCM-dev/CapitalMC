@@ -20,7 +20,8 @@ public class ActivityPage extends BaseSubGui
     private final PollingValue<Data> cache = new PollingValue<>(new Data(List.of(), List.of(), List.of(), List.of(), new ReadPage()));
     private int page, count;
     private UUID context;
-    private long epoch, filter;
+    private long epoch;
+    private SymbolType filter;
     private ReadCursor cursor = new ReadCursor();
     private final Deque<ReadCursor> previous = new ArrayDeque<>();
     private ReadPage queryPage = new ReadPage();
@@ -67,51 +68,64 @@ public class ActivityPage extends BaseSubGui
         }
         var user = gui.getUser().orElseThrow();
         long version = CapitalMC.serverUserManager.getSessionVersion(gui.getPlayer().getUUID());
-        long symbolId = gui.getSelectedSymbol() == null ? 0 : gui.getSelectedSymbol().symbolId();
-        if (!Objects.equals(context, user.getUuid()) || epoch != version || filter != symbolId)
+        var type = gui.activityType();
+        if (!Objects.equals(context, user.getUuid()) || epoch != version || filter != type)
         {
             context = user.getUuid();
             epoch = version;
-            filter = symbolId;
+            filter = type;
             reset();
         }
         var data = cache.get(List.of(context, epoch, filter, cursor), () -> {
-            CompletableFuture<Data> rows = getPage() == PageType.ORDERS
-                    ? TradeUtil.orderPage(user, false, symbolId, cursor).thenApply(r -> new Data(r.values(), List.of(), List.of(), List.of(), r.page()))
-                    : TradeUtil.positionPage(user, false, symbolId, cursor).thenApply(r -> new Data(List.of(), r.values(), List.of(), List.of(), r.page()));
-            return rows.thenCombine(SymbolUtil.allSymbols(), (d, s) -> new Data(d.orders, d.positions, s, List.of(), d.queryPage))
+            return SymbolUtil.allSymbols().thenCompose(symbols -> {
+                CompletableFuture<Data> rows = getPage() == PageType.ORDERS
+                        ? ActivityScope.page(next -> TradeUtil.orderPage(user, false, 0, next), cursor,
+                                             row -> ActivityScope.matches(row, symbols, type) && !ActivityScope.terminal(row))
+                                       .thenApply(r -> new Data(r.values(), List.of(), symbols, List.of(), r.page()))
+                        : ActivityScope.page(next -> TradeUtil.positionPage(user, false, 0, next), cursor,
+                                             row -> ActivityScope.matches(row, symbols, type) && !row.closed() && row.size() > 0)
+                                       .thenApply(r -> new Data(List.of(), r.values(), symbols, List.of(), r.page()));
+                return rows;
+            })
                        .thenCombine(AssetUtil.allAssets(), (d, a) -> new Data(d.orders, d.positions, d.symbols, a, d.queryPage));
         });
         queryPage = data.queryPage;
-        GuiWidgets.option(gui, 7, Items.BOOK, "ui.orders", "", getPage() == PageType.ORDERS, () -> gui.showPage(PageType.ORDERS));
-        GuiWidgets.option(gui, 8, Items.SHIELD, "ui.positions", "", getPage() == PageType.POSITIONS, () -> gui.showPage(PageType.POSITIONS));
-        GuiWidgets.button(gui, 6, Items.BOOK, getPage() == PageType.ORDERS ? "ui.order_history" : "ui.position_history", "", () -> gui.showPage(getPage() == PageType.ORDERS ? PageType.ORDER_HISTORY : PageType.POSITION_HISTORY));
-        GuiWidgets.button(gui, 5, Items.PAPER, "ui.trades", "", () -> gui.showPage(PageType.TRADES));
-        GuiWidgets.button(gui, 4, Items.REDSTONE_TORCH, "ui.conditional.page", "", () -> gui.showPage(PageType.CONDITIONALS));
-        GuiWidgets.separator(gui);
+        GuiWidgets.activityNavigation(gui, getPage());
+        if (cache.error() != null)
+        {
+            count = 0;
+            queryPage = new ReadPage();
+            GuiWidgets.button(gui, 22, Items.PAPER, "ui.query_failed", ExchangeMessages.error(gui.getPlayer(), cache.error()), this::reset);
+            return;
+        }
+        if (!cache.loaded())
+        {
+            gui.setSlot(22, TradingGui.icon(gui.getPlayer(), Items.CLOCK, "ui.loading", ""));
+            return;
+        }
         if (getPage() == PageType.ORDERS)
         {
-            var orders = data.orders.stream().filter(o -> symbolId == 0 || o.symbolId() == symbolId).toList();
+            var orders = data.orders;
             count = orders.size();
             page = GuiWidgets.clamp(page, count);
             for (int i = page * 27; i < Math.min(count, page * 27 + 27); i++)
             {
                 var order = orders.get(i);
                 var s = symbol(data, order.symbolId());
-                String lore = GuiWidgets.text(gui, "ui.order.details", order.side(), order.type(), order.timeInForce(), price(data, s, order.price()), GameServices.get().markets.quantityUnits(s).format(order.filling().unfilled()), order.filling().status());
+                String lore = FinancialText.lore(order, data.symbols, gui.getPlayer()) + "\n" + GuiWidgets.text(gui, "ui.activity.cancel");
                 GuiWidgets.button(gui, 18 + i - page * 27, Items.PAPER, s.name() + " #" + order.orderId(), lore, () -> GuiActions.confirm(gui, "ui.confirm.cancel_order", () -> GuiActions.task(gui, TradeUtil.cancel(user, order.orderId(), System.currentTimeMillis()), "ui.success.cancel_order", order.orderId())));
             }
         }
         else
         {
-            var positions = data.positions.stream().filter(p -> !p.closed() && (symbolId == 0 || p.symbolId() == symbolId)).toList();
+            var positions = data.positions;
             count = positions.size();
             page = GuiWidgets.clamp(page, count);
             for (int i = page * 27; i < Math.min(count, page * 27 + 27); i++)
             {
                 var position = positions.get(i);
                 var s = symbol(data, position.symbolId());
-                String lore = GuiWidgets.text(gui, "ui.position.details", position.side(), GameServices.get().markets.quantityUnits(s).format(position.size()), price(data, s, position.averageEntryPrice()), price(data, s, position.predictedLiquidationPrice()), AssetUtil.units(s.quoteAssetId(), scale(data, s.quoteAssetId())).format(position.unrealizedPnL()), position.leverage(), position.marginMode());
+                String lore = FinancialText.lore(position, data.symbols, gui.getPlayer()) + "\n" + GuiWidgets.text(gui, "ui.activity.position");
                 GuiWidgets.button(gui, 18 + i - page * 27, Items.SHIELD, s.name() + " #" + position.positionId(), lore, () -> {
                     gui.selectPosition(position.positionId());
                     gui.showPage(PageType.POSITION);
@@ -120,14 +134,14 @@ public class ActivityPage extends BaseSubGui
         }
         if (count == 0)
         {
-            gui.setSlot(22, TradingGui.icon(gui.getPlayer(), Items.PAPER, cache.error() == null ? "ui.empty" : "ui.query_failed", ""));
+            gui.setSlot(22, TradingGui.icon(gui.getPlayer(), Items.PAPER, "ui.empty", queryPage.hasMore() ? "ui.history.scan_more" : ""));
         }
     }
 
     @Override
     public void renderOverlay(TradingGui gui)
     {
-
+        GuiWidgets.button(gui, 46, Items.END_CRYSTAL, "gui.capitalmc.refresh", "", this::reset);
         if (!previous.isEmpty())
         {
             GuiWidgets.button(gui, 51, Items.ARROW, "ui.page.previous", "", () -> {

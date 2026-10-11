@@ -5,9 +5,9 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import nhcm.advmatch.BusinessException;
 import nhcm.advmatch.command.persistence.Flush;
 import nhcm.capitalmc.CapitalMC;
+import nhcm.capitalmc.backend.NetworkConfig;
 import nhcm.capitalmc.gui.TradingGui;
 
 import java.util.concurrent.*;
@@ -24,12 +24,15 @@ public class GameServices
     public final MarketService markets;
     public final AdministrationService administration;
     private final CompletableFuture<Void> ready;
+    private CompletableFuture<Void> refreshing = CompletableFuture.completedFuture(null);
+    private boolean reloadPending;
+    private volatile long appliedSharedRevision;
 
     public GameServices(MinecraftServer server)
     {
         this.server = server;
         state = new ServiceState(FabricLoader.getInstance().getGameDir().resolve("capitalmc/services.json"));
-        CapitalMC.serverUserManager.setAccessPolicy(user -> {
+        if (CapitalMC.runtime.config.mode == NetworkConfig.Mode.REMOTE) CapitalMC.serverUserManager.setAccessPolicy(user -> {
             var restrictions = state.section("userRestrictions").getAsJsonObject("userRestrictions");
             var restriction = restrictions == null ? null : restrictions.getAsJsonObject(user.getUuid().toString());
             return restriction == null || !restriction.get("banned").getAsBoolean();
@@ -41,15 +44,13 @@ public class GameServices
         markets = new MarketService(this);
         administration = new AdministrationService(this);
         items.registerEvents();
-        ready = CapitalMC.accountsReady.thenCompose(unused -> items.initialize()).thenCompose(unused -> assets.initialize())
-                                       .thenCompose(unused -> onServer(() -> assets.registerElectronic("mc_exp", "Exp", 0, new ItemStack(Items.EXPERIENCE_BOTTLE))).thenCompose(registration -> registration))
-                                       .thenCompose(unused -> markets.initialize()).thenCompose(unused -> currency.initialize())
-                                       .thenCompose(unused -> CapitalMC.exchange.contracts().setAutomaticLiquidationBudget(32).thenAccept(receipt -> {
-                                           if (!receipt.result().accepted())
-                                           {
-                                               throw new BusinessException(receipt);
-                                           }
-                                       }))
+        ready = CapitalMC.accountsReady.thenCompose(unused -> state.useShared(CapitalMC.runtime.backend))
+                                       .thenCompose(unused -> items.initialize())
+                                       .thenCompose(unused -> CapitalMC.runtime.backend.exclusive("configuration", () -> state.refreshShared()
+                                               .thenCompose(changed -> assets.initialize())
+                                               .thenCompose(ignored -> onServer(() -> assets.registerElectronic("mc_exp", "Exp", 0, new ItemStack(Items.EXPERIENCE_BOTTLE))).thenCompose(registration -> registration))
+                                               .thenCompose(ignored -> currency.initialize())))
+                                       .thenCompose(unused -> markets.initialize())
                                        .thenCompose(unused -> CapitalMC.exchange.submit(new Flush()).thenAccept(status -> {
                                            if (!status.enabled() || status.faulted() || status.durableThrough() < status.sequence())
                                            {
@@ -57,6 +58,7 @@ public class GameServices
                                            }
                                        }));
         ready.whenComplete((unused, error) -> {
+            if (error == null) appliedSharedRevision = state.sharedRevision();
             if (error != null)
             {
                 CapitalMC.logger.error("Cannot initialize Minecraft exchange services", error);
@@ -67,6 +69,26 @@ public class GameServices
     public CompletableFuture<Void> ready()
     {
         return ready;
+    }
+
+    public void refreshShared()
+    {
+        if (!ready.isDone() || ready.isCompletedExceptionally() || !refreshing.isDone() || assets.editing()) return;
+        refreshing = CapitalMC.serverUserManager.refreshDirectory().thenCompose(unused -> state.refreshShared())
+                              .thenCompose(changed -> onServer(() -> {
+                                  long revision = state.sharedRevision();
+                                  reloadPending |= changed || appliedSharedRevision != revision;
+                                  if (!reloadPending || assets.editing()) return CompletableFuture.<Void>completedFuture(null);
+                                  return assets.initialize().thenCompose(unused -> markets.reload()).thenCompose(unused -> onServer(() -> {
+                                      reloadPending = false;
+                                      appliedSharedRevision = revision;
+                                      return (Void) null;
+                                  }));
+                              }).thenCompose(future -> future));
+        refreshing.exceptionally(error -> {
+            CapitalMC.logger.debug("Shared exchange metadata refresh failed", error);
+            return null;
+        });
     }
 
     public <T> CompletableFuture<T> onServer(Supplier<T> work)

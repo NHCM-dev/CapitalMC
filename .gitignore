@@ -1,9 +1,22 @@
+# Build outputs and local server state
 .gradle/
-build/
-run/
-out/
+/build/
+/run/
+/out/
+/reports/
+/release-artifacts/
+
+# IDE configuration
 .idea/
 *.iml
 .vscode/
-docs/
-reports/
+
+# Local credentials and diagnostics
+.env
+.env.*
+!.env.example
+*.log
+hs_err_pid*
+replay_pid*
+*.hprof
+*.jfr

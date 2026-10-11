@@ -5,6 +5,8 @@ import com.google.gson.JsonParser;
 import nhcm.advmatch.Exchange;
 import nhcm.advmatch.object.User;
 import nhcm.capitalmc.account.ServerUser;
+import nhcm.capitalmc.backend.AccountDirectory;
+import nhcm.capitalmc.backend.AccountViews;
 import nhcm.capitalmc.service.ApplicationExecutors;
 
 import java.io.IOException;
@@ -33,6 +35,62 @@ public class ServerUserManager
     public static final int MAX_ACCOUNTS_PER_UUID = 3;
     private volatile Map<UUID, ServerUser> usersById = Map.of();
     private volatile Predicate<ServerUser> accessAllowed = user -> true;
+    private volatile AccountDirectory directory;
+    private volatile long directoryGeneration;
+    private List<ServerUser> directoryImage;
+
+    public void useDirectory(AccountDirectory directory)
+    {
+        this.directory = Objects.requireNonNull(directory);
+    }
+
+    public CompletableFuture<Void> refreshDirectory()
+    {
+        if (directory == null) return CompletableFuture.completedFuture(null);
+        long expected = directoryGeneration;
+        return directory.snapshot().thenAccept(users -> {
+            synchronized (this)
+            {
+                if (directoryGeneration == expected) publishDirectory(users);
+            }
+        });
+    }
+
+    private synchronized void publishDirectory(List<ServerUser> users)
+    {
+        if (directoryImage == users) return;
+        directoryImage = users;
+        var next = new HashMap<UUID, ServerUser>();
+        for (var user : users)
+        {
+            var current = usersById.get(user.getUuid());
+            if (current != null && AccountViews.encode(current).equals(AccountViews.encode(user)))
+            {
+                user = current;
+            }
+            else if (current != null)
+            {
+                revokeSessions(user.getUuid());
+            }
+            next.put(user.getUuid(), user);
+        }
+        usersById.keySet().stream().filter(id -> !next.containsKey(id)).forEach(this::revokeSessions);
+        usersById = Map.copyOf(next);
+        directoryGeneration++;
+    }
+
+    private synchronized ServerUser publishAccount(ServerUser user)
+    {
+        var next = new HashMap<>(usersById);
+        var current = next.get(user.getUuid());
+        if (current != null && AccountViews.encode(current).equals(AccountViews.encode(user))) return current;
+        if (current != null) revokeSessions(user.getUuid());
+        next.put(user.getUuid(), user);
+        usersById = Map.copyOf(next);
+        directoryImage = null;
+        directoryGeneration++;
+        return user;
+    }
 
     public void setAccessPolicy(Predicate<ServerUser> policy)
     {
@@ -97,6 +155,7 @@ public class ServerUserManager
             throw new IllegalStateException("Cannot replace the connected exchange");
         }
         this.exchange = exchange;
+        if (directory != null) return refreshDirectory();
         return connectExchangeUsers(new ExchangeUsers()
         {
             public CompletableFuture<Long> create()
@@ -123,6 +182,7 @@ public class ServerUserManager
      */
     public CompletableFuture<ServerUser> ensureExchangeUser(UUID accountId)
     {
+        if (directory != null) return directory.ensure(accountId).thenApply(this::publishAccount);
         ServerUser known = get(accountId).orElse(null);
         if (known != null && known.getExchangeUserId() != 0 && validatedExchangeIds.contains(known.getExchangeUserId()))
         {
@@ -206,6 +266,10 @@ public class ServerUserManager
     public CompletableFuture<ServerUser> registerAsync(String displayName, String username,
                                                        String password, UUID ownerUuid, JsonObject profile)
     {
+        if (directory != null)
+        {
+            return directory.register(displayName, username, password, ownerUuid, profile).thenApply(this::publishAccount);
+        }
         JsonObject snapshot = profile == null ? null : profile.deepCopy();
         return CompletableFuture.supplyAsync(() -> new ServerUser(displayName, username, password,
                                                                   UUID.randomUUID(), ownerUuid).withProfile(snapshot), ApplicationExecutors.CREDENTIALS)
@@ -215,6 +279,10 @@ public class ServerUserManager
 
     public CompletableFuture<Optional<ServerUser>> authenticateAsync(String username, String password)
     {
+        if (directory != null)
+        {
+            return directory.authenticate(username, password).thenApply(found -> found.map(this::publishAccount));
+        }
         ServerUser candidate = findByUsername(username).orElse(null);
         if (candidate != null && !accessAllowed.test(candidate))
         {
@@ -265,6 +333,10 @@ public class ServerUserManager
 
     public CompletableFuture<Boolean> changePasswordAsync(String username, String oldPassword, String newPassword)
     {
+        if (directory != null)
+        {
+            return directory.password(username, oldPassword, newPassword).thenCompose(changed -> refreshDirectory().thenApply(unused -> changed));
+        }
         return authenticateAsync(username, oldPassword).thenCompose(found -> {
             if (found.isEmpty())
             {
@@ -343,6 +415,7 @@ public class ServerUserManager
 
     public synchronized ServerUser register(ServerUser user)
     {
+        requireLocalDirectory();
         Objects.requireNonNull(user, "user");
         validateRegistration(user.getOwnerUuid(), user.getUsername());
         if (usersById.containsKey(user.getUuid()))
@@ -403,6 +476,7 @@ public class ServerUserManager
      */
     public Optional<ServerUser> authenticate(String username, String password)
     {
+        requireLocalDirectory();
         return findByUsername(username).filter(accessAllowed).filter(user -> user.verifyPassword(password));
     }
 
@@ -450,6 +524,7 @@ public class ServerUserManager
      */
     public synchronized Optional<ServerUser> remove(UUID ownerUuid, UUID accountId)
     {
+        requireLocalDirectory();
         Objects.requireNonNull(ownerUuid, "ownerUuid");
         ServerUser user = get(accountId).orElse(null);
         if (user == null)
@@ -614,5 +689,10 @@ public class ServerUserManager
         {
             throw new UncheckedIOException("Cannot save binary account registry", error);
         }
+    }
+
+    private void requireLocalDirectory()
+    {
+        if (directory != null) throw new IllegalStateException("Use asynchronous account operations with REMOTE mode");
     }
 }

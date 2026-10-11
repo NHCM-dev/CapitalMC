@@ -2,6 +2,7 @@ package nhcm.capitalmc.exchange;
 
 import net.minecraft.server.level.ServerPlayer;
 import nhcm.advmatch.BusinessException;
+import nhcm.advmatch.remote.RemoteFailure;
 import nhcm.advmatch.model.*;
 import nhcm.capitalmc.i18n.I18n;
 import nhcm.capitalmc.service.CurrencyService;
@@ -38,8 +39,13 @@ public class ExchangeMessages
 
     public static String error(String language, Throwable error)
     {
-        while (error.getCause() != null && !(error instanceof BusinessException))
+        while (error.getCause() != null && !(error instanceof BusinessException) && !(error instanceof RemoteFailure)
+               && (error.getMessage() == null || !error.getMessage().matches("(ui|cli)\\.[A-Za-z0-9_.]+")))
             error = error.getCause();
+        if (error instanceof RemoteFailure remote)
+        {
+            return I18n.format(language, remote.mayHaveExecuted() ? "ui.exchange.request_uncertain" : "ui.exchange.connection_stale");
+        }
         if (error instanceof CurrencyService.FundsException funds)
         {
             // Only the signed-in account's own funds may appear in public error details.

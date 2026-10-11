@@ -89,6 +89,24 @@ public class TradingGui extends SimpleGui
     }
 
     private SymbolView selectedSymbol;
+    private SymbolType activityType = SymbolType.Perpetual;
+
+    public SymbolType activityType()
+    {
+        return activityType;
+    }
+
+    public void activityType(SymbolType type)
+    {
+        activityType = Objects.requireNonNull(type);
+        selectedConditional = 0;
+    }
+
+    public void showActivity(SymbolType type, PageType page)
+    {
+        activityType(type);
+        showPage(page);
+    }
     private final BookSettings bookSettings = new BookSettings();
 
     public BookSettings bookSettings()
@@ -141,6 +159,7 @@ public class TradingGui extends SimpleGui
     public void showTrading(SymbolView view)
     {
         selectedSymbol = view;
+        activityType(view.type());
         PageType page = view.type() == SymbolType.Spot ? PageType.TRADE_SPOT : PageType.TRADE_CONTRACT;
         ((TradePage) pages.get(page)).setSymbol(CapitalMC.exchange.symbols().get(view.symbolId()));
         showPage(page);

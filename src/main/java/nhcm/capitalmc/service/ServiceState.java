@@ -1,6 +1,7 @@
 package nhcm.capitalmc.service;
 
 import com.google.gson.*;
+import nhcm.capitalmc.backend.SharedMetadata;
 
 import java.io.*;
 import java.nio.ByteBuffer;
@@ -20,9 +21,50 @@ public class ServiceState
     private static final Gson JSON = new Gson();
     private final Path file, journal;
     private volatile JsonObject data;
-    private long sequence;
+    private volatile long sequence;
     private int sinceCheckpoint;
     private boolean faulted;
+    private volatile SharedMetadata shared;
+    private JsonObject durableData;
+    private volatile long sharedGeneration;
+
+    public CompletableFuture<Void> useShared(SharedMetadata shared)
+    {
+        this.shared = Objects.requireNonNull(shared);
+        return refreshShared().thenApply(changed -> null);
+    }
+
+    public CompletableFuture<Boolean> refreshShared()
+    {
+        if (shared == null) return CompletableFuture.completedFuture(false);
+        long expected = sharedGeneration;
+        return shared.read().thenApplyAsync(image -> {
+            synchronized (this)
+            {
+                // A delayed read must not overwrite a commit completed after that read began.
+                return sharedGeneration == expected && publishShared(image);
+            }
+        }, ApplicationExecutors.IO);
+    }
+
+    private synchronized boolean publishShared(JsonObject image)
+    {
+        if (SharedMetadata.select(data).equals(image)) return false;
+        var next = data.deepCopy();
+        overlay(next, image);
+        data = next;
+        sharedGeneration++;
+        return true;
+    }
+
+    private static void overlay(JsonObject target, JsonObject source)
+    {
+        for (String field : SharedMetadata.FIELDS)
+        {
+            target.remove(field);
+            if (source.has(field)) target.add(field, source.get(field).deepCopy());
+        }
+    }
 
     public ServiceState(Path file)
     {
@@ -33,6 +75,7 @@ public class ServiceState
             data = Files.exists(this.file) ? JsonParser.parseString(Files.readString(this.file)).getAsJsonObject() : new JsonObject();
             sequence = data.has("_stateSequence") ? data.remove("_stateSequence").getAsLong() : 0;
             recover();
+            durableData = data;
         } catch (IOException error)
         {
             throw new UncheckedIOException(error);
@@ -42,6 +85,16 @@ public class ServiceState
     public JsonObject snapshot()
     {
         return data.deepCopy();
+    }
+
+    public long revision()
+    {
+        return sequence;
+    }
+
+    public long sharedRevision()
+    {
+        return sharedGeneration;
     }
 
     public record Entries(int total, List<Map.Entry<String, JsonElement>> values)
@@ -122,8 +175,18 @@ public class ServiceState
         {
             throw new IllegalArgumentException("Reserved metadata field");
         }
+        if (shared != null)
+        {
+            var before = SharedMetadata.select(data);
+            var after = SharedMetadata.select(next);
+            if (!before.equals(after))
+            {
+                overlay(next, shared.commit(before, after).join());
+                sharedGeneration++;
+            }
+        }
         JsonArray changes = new JsonArray();
-        diff(data, next, new JsonArray(), changes);
+        diff(durableData, next, new JsonArray(), changes);
         if (changes.isEmpty())
         {
             return;
@@ -156,6 +219,7 @@ public class ServiceState
                 channel.force(true);
             }
             data = next;
+            durableData = next;
             sequence = nextSequence;
             sinceCheckpoint++;
             if (sinceCheckpoint >= 128 || Files.size(journal) >= 4 * 1024 * 1024)
@@ -225,7 +289,7 @@ public class ServiceState
 
     private synchronized void checkpoint() throws IOException
     {
-        JsonObject saved = data.deepCopy();
+        JsonObject saved = (durableData == null ? data : durableData).deepCopy();
         saved.addProperty("_stateSequence", sequence);
         Path temporary = Files.createTempFile(file.getParent(), "capital-", ".tmp");
         try

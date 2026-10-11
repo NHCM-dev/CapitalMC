@@ -2,7 +2,7 @@
 
 English · [简体中文](README.zh-CN.md)
 
-A server-side Minecraft exchange powered by **AdvMatch 1.2.0**. Trade items and electronic assets through an inventory GUI. Players do not need a client mod.
+A server-side Minecraft exchange powered by **AdvMatch 1.3.0**. Trade items and electronic assets through an inventory GUI. Players do not need a client mod.
 
 ## Features
 
@@ -12,6 +12,7 @@ A server-side Minecraft exchange powered by **AdvMatch 1.2.0**. Trade items and 
 - Batch item deposits, withdrawals, transfers and pegged currency exchange.
 - Administrator tools for assets, markets, supply, fees, risk limits and recovery.
 - English and Chinese UI, decimal input and private chat prompts.
+- Shared exchange across Minecraft servers, LOCAL/REMOTE modes and a standalone backend; coalesced data subscriptions.
 
 ## Install and build
 
@@ -21,17 +22,21 @@ Requires **Minecraft 26.3**, **Fabric Loader 0.19.5+**, **Fabric API for 26.3** 
 .\gradlew.bat build
 ```
 
-Place `build/libs/CapitalMC-0.2.0-SNAPSHOT.jar` and Fabric API in the server's `mods` folder. SGui and AdvMatch are bundled. The included AdvMatch library supports **Windows amd64 and Linux amd64 (glibc)**; other platforms need a matching native SDK build. The current Linux bundle requires glibc 2.38+; see the AdvMatch build documentation.
+Place `build/libs/CapitalMC-0.3.0-SNAPSHOT.jar` and Fabric API in the server's `mods` folder. SGui and AdvMatch are bundled. The included AdvMatch library supports **Windows amd64 and Linux amd64 (glibc)**; other platforms need a matching native SDK build. The current Linux bundle requires glibc 2.38+; see the AdvMatch build documentation.
 
 For development, run `.\gradlew.bat runServer` and accept the Minecraft EULA before starting the server. The build runs unit tests and Minecraft GameTests.
 
 ## Get started
+
+For multiple servers, follow [shared exchange setup](documentation/cross-server.en.md). The standalone owner is `CapitalMC-0.3.0-SNAPSHOT-exchange-server.jar`; Minecraft gateways use `config/capitalmc.json`.
 
 1. Run `/trade gui`, then register or log in to a trading account.
 2. Deposit a registered asset, select a market and choose spot or contract trading.
 3. Set the order details, review the summary and confirm in private chat.
 
 Use `/cmcadmin gui` for administration; owner permission is required. A new server needs registered assets and configured markets before players can trade.
+
+Open **My orders and positions** from My Account, or use the order/position buttons on a trading page. Browse all markets within spot, perpetual or futures trading, including order history and take-profit/stop-loss orders. Spot trading has no positions.
 
 [Player and administrator guide](documentation/guide.en.md) · [中文使用说明](documentation/guide.zh-CN.md)
 

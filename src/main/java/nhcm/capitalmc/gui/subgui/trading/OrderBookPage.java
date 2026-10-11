@@ -141,7 +141,7 @@ public class OrderBookPage extends BaseSubGui
             lore += "\n" + GuiWidgets.text(gui, "ui.trade.contract_statistics", base.units().price(contract.referencePrices().indexPrice(), quote.units()),
                                            base.units().price(contract.markPrice(), quote.units()),
                                            DecimalUnits.format(contract.referencePrices().fundingRate(), 4),
-                                           DecimalUnits.format(contract.lastFundingRate(), 4));
+                                           DecimalUnits.format(contract.lastFundingRate(), 4), quote.displayName(), base.displayName());
         }
         return lore + "\n" + GuiWidgets.text(gui, "ui.book.snapshot_hint");
     }

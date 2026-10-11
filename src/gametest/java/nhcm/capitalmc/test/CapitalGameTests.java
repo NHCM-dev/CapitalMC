@@ -25,6 +25,7 @@ import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.network.Connection;
 import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.Style;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.server.MinecraftServer;
@@ -404,7 +405,7 @@ public final class CapitalGameTests
                 gui.refresh();
                 var item = gui.getGuiElement(29);
                 if (item != null && item.getItemStackForDisplay(gui).getOrDefault(DataComponents.LORE, ItemLore.EMPTY)
-                                        .lines().stream().anyMatch(line -> line.getString().equals("Available quantity: 5")))
+                                        .lines().stream().anyMatch(line -> line.getString().equals("Estimated quantity available to open long: 5 Diamond")))
                 {
                     calculated.complete(null);
                 }
@@ -501,7 +502,7 @@ public final class CapitalGameTests
                     click(gui, 11);
                     gui.refresh();
                     if (gui.getGuiElement(30).getItemStackForDisplay(gui).getOrDefault(DataComponents.LORE, ItemLore.EMPTY).lines().stream()
-                           .anyMatch(line -> line.getString().equals("Available quantity: 10")))
+                           .anyMatch(line -> line.getString().equals("Estimated quantity available to open long: 10 Market base")))
                     {
                         loaded.complete(null);
                     }
@@ -630,7 +631,7 @@ public final class CapitalGameTests
                             position.getItemStackForDisplay(gui).getOrDefault(DataComponents.LORE, ItemLore.EMPTY).lines()));
                 }
                 if (position != null && position.getItemStackForDisplay(gui).getOrDefault(DataComponents.LORE, ItemLore.EMPTY)
-                                                .lines().stream().anyMatch(line -> line.getString().equals("Available to close: 6")))
+                                                .lines().stream().anyMatch(line -> line.getString().equals("Available to close: 6 Close ticket base")))
                 {
                     longLoaded.complete(null);
                 }
@@ -2319,7 +2320,49 @@ public final class CapitalGameTests
             };
             return CompletableFuture.completedFuture(null);
         });
+        test.add(SymbolUtil::allSymbols);
+        test.add(() -> {
+            var other = ((List<SymbolView>) test.last).stream().filter(value -> value.type() == SymbolType.Spot).findFirst().orElseThrow();
+            var gui = CapitalMC.guiManager.getTradingGui(test.player);
+            gui.showTrading(other);
+            gui.showActivity(SymbolType.Future, PageType.POSITION_HISTORY);
+            var done = new CompletableFuture<Void>();
+            test.poll = () -> {
+                gui.refresh();
+                for (int slot = 18; slot < 45; slot++)
+                {
+                    var element = gui.getGuiElement(slot);
+                    if (element == null) continue;
+                    var item = element.getItemStackForDisplay(gui);
+                    if (!item.getHoverName().getString().contains("#" + position[0].positionId())) continue;
+                    var lines = item.getOrDefault(DataComponents.LORE, ItemLore.EMPTY).lines();
+                    check(lines.stream().anyMatch(line -> line.getString().contains("Protect quote")), "PnL / prices have no quote units");
+                    check(lines.stream().anyMatch(line -> line.getString().contains("Protect base")), "Quantity has no base units");
+                    check(lines.stream().anyMatch(line -> hasColor(line, 0x55ff55)), "Long direction lost its green text style");
+                    check(gui.getSelectedSymbol().symbolId() == other.symbolId(), "Browsing unexpectedly rewrote the trading ticket");
+                    done.complete(null);
+                }
+            };
+            return done;
+        });
+        test.add(() -> {
+            test.poll = () -> {};
+            return PositionOrders.owned(test.user, position[0].positionId()).handle((value, error) -> {
+                check(error != null, "Closed position remains available for management");
+                return null;
+            });
+        });
         test.run();
+    }
+
+    private static boolean hasColor(Component line, int color)
+    {
+        boolean[] found = {false};
+        line.visit((style, text) -> {
+            if (style.getColor() != null && style.getColor().getValue() == color) found[0] = true;
+            return Optional.empty();
+        }, Style.EMPTY);
+        return found[0];
     }
 
     private static CompletableFuture<Void> awaitReply(Steps test, String expected, Runnable action)
@@ -2339,7 +2382,7 @@ public final class CapitalGameTests
             }
             else if (player.messages.stream().anyMatch(message -> message.startsWith("[Failed]")))
             {
-                throw new AssertionError("Command/GUI operation failed: " + player.messages);
+                throw new AssertionError("Expected " + expected + "; command/GUI operation failed: " + player.messages);
             }
         };
         action.run();

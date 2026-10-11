@@ -74,7 +74,7 @@ public class PositionPage extends BaseSubGui
 
     private void quantityInput(Data data, LongConsumer next)
     {
-        GuiActions.input(getGui(), GuiWidgets.text(getGui(), "ui.input.close_quantity", GameServices.get().markets.quantityUnits(data.symbol).format(data.position.size())),
+        GuiActions.input(getGui(), GuiWidgets.text(getGui(), "ui.input.close_quantity", FinancialText.quantity(data.symbol, data.position.size(), getGui().getPlayer())),
                          text -> PositionOrders.quantity(data.position, GameServices.get().markets.quantityUnits(data.symbol).parse(text))).thenAccept(value -> value.ifPresent(next::accept))
                   .exceptionally(error -> {
                       GuiActions.error(getGui(), error);
@@ -115,7 +115,7 @@ public class PositionPage extends BaseSubGui
         var gui = getGui();
         var user = GuiActions.user(gui);
         String summary = GuiWidgets.text(gui, "ui.position.close_summary", data.position.positionId(), type,
-                                         GameServices.get().markets.quantityUnits(data.symbol).format(quantity == 0 ? data.position.size() : quantity));
+                                         FinancialText.quantity(data.symbol, quantity == 0 ? data.position.size() : quantity, gui.getPlayer()));
         if (type == OrderType.Limit)
         {
             var base = GameServices.get().assets.find(data.symbol.baseAssetId()).orElseThrow();
@@ -192,7 +192,7 @@ public class PositionPage extends BaseSubGui
         var gui = getGui();
         var user = GuiActions.user(gui);
         long positionId = data.position.positionId();
-        String size = quantity == 0 ? GuiWidgets.text(gui, "ui.position.all") : GameServices.get().markets.quantityUnits(data.symbol).format(quantity);
+        String size = quantity == 0 ? GuiWidgets.text(gui, "ui.position.all") : FinancialText.quantity(data.symbol, quantity, gui.getPlayer());
         String summary = GuiWidgets.text(gui, "ui.conditional.confirm", kind, selectedSource, type, positionId, size, sibling)
                          + "\n" + priceSummary(data, trigger, price, quantity, type);
         GuiActions.confirm(gui, summary, () -> {
@@ -289,15 +289,26 @@ public class PositionPage extends BaseSubGui
         var data = cache.get(key, () -> load(user, id));
         if (data.position == null || cache.error() != null)
         {
-            gui.setSlot(22, TradingGui.icon(gui.getPlayer(), Items.PAPER, cache.error() == null ? "ui.loading" : "ui.position.unavailable", ""));
+            GuiWidgets.button(gui, 22, Items.PAPER, cache.error() == null ? "ui.loading" : "ui.position.unavailable",
+                              cache.error() == null ? "" : ExchangeMessages.error(gui.getPlayer(), cache.error()), () -> {
+                gui.selectPosition(0);
+                cache.invalidate();
+                gui.showPage(PageType.POSITIONS);
+            });
             return;
         }
         var p = data.position;
         var s = data.symbol;
-        String detail = FinancialText.row(p, List.of(s), gui.getPlayer()) + "\n" + GuiWidgets.text(gui, "ui.position.margin_details",
+        if (gui.activityType() != s.type()) gui.activityType(s.type());
+        String detail = FinancialText.lore(p, List.of(s), gui.getPlayer()) + "\n" + GuiWidgets.text(gui, "ui.position.margin_details",
                                                                                                    GuiWidgets.amount(s.quoteAssetId(), p.initialMargin()), GuiWidgets.amount(s.quoteAssetId(), p.maintenanceMargin()),
                                                                                                    GameServices.get().assets.find(s.quoteAssetId()).orElseThrow().displayName());
         GuiWidgets.button(gui, 22, Items.SHIELD, s.name() + " #" + id, detail, null);
+        if (!p.managed())
+        {
+            GuiWidgets.button(gui, 8, Items.SHIELD, "ui.positions", "ui.activity.unmanaged", () -> gui.showPage(PageType.POSITIONS));
+            return;
+        }
         GuiWidgets.button(gui, 0, Items.NETHER_STAR, "ui.position.close_all", "ui.position.market_hint", () -> close(data, OrderType.Market, true));
         GuiWidgets.button(gui, 1, Items.SHEARS, "ui.position.close_market_partial", "ui.position.market_hint", () -> close(data, OrderType.Market, false));
         GuiWidgets.button(gui, 2, Items.BOW, "ui.position.close_limit_all", "ui.position.limit_hint", () -> close(data, OrderType.Limit, true));
@@ -313,7 +324,7 @@ public class PositionPage extends BaseSubGui
         GuiWidgets.button(gui, 18, Items.EMERALD, "ui.conditional.take_profit", "ui.conditional.position_hint", () -> protect(data, ConditionalOrderKind.TakeProfit));
         GuiWidgets.button(gui, 19, Items.REDSTONE, "ui.conditional.stop_loss", "ui.conditional.position_hint", () -> protect(data, ConditionalOrderKind.StopLoss));
         GuiWidgets.button(gui, 20, Items.TRIPWIRE_HOOK, "ui.conditional.pair", "ui.conditional.pair_hint", () -> pair(data));
-        GuiWidgets.button(gui, 27, Items.PAPER, GuiWidgets.text(gui, "ui.conditional.size", protectedQuantity == 0 ? GuiWidgets.text(gui, "ui.position.all") : GameServices.get().markets.quantityUnits(s).format(protectedQuantity)),
+        GuiWidgets.button(gui, 27, Items.PAPER, GuiWidgets.text(gui, "ui.conditional.size", protectedQuantity == 0 ? GuiWidgets.text(gui, "ui.position.all") : FinancialText.quantity(s, protectedQuantity, gui.getPlayer())),
                           "ui.conditional.size_hint", () -> quantityInput(data, amount -> protectedQuantity = amount));
         GuiWidgets.button(gui, 28, Items.NETHER_STAR, "ui.conditional.size_all", "", () -> protectedQuantity = 0);
         GuiWidgets.button(gui, 29, Items.TRIPWIRE_HOOK, GuiWidgets.text(gui, "ui.conditional.oco", oco), "ui.conditional.oco_hint", () ->

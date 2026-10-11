@@ -54,6 +54,8 @@ public class AccountPage extends BaseSubGui
             search = "";
             page = 0;
         });
+        GuiWidgets.button(gui, 2, Items.BOOK, "ui.activity.account", "ui.activity.account_hint", () -> gui.showActivity(
+                accountType == AccountType.Spot ? SymbolType.Spot : SymbolType.Perpetual, PageType.ORDERS));
         GuiWidgets.button(gui, 4, Items.NAME_TAG, "gui.capitalmc.account.deposit_withdraw", "", () -> gui.showPage(PageType.DEPOSIT_WITHDRAW));
         GuiWidgets.button(gui, 5, Items.EMERALD, "ui.peg", "", () -> gui.showPage(PageType.PEG));
         GuiWidgets.button(gui, 6, Items.RAIL, "gui.capitalmc.account.transfer", "", () -> gui.showPage(PageType.TRANSFER));
@@ -93,7 +95,7 @@ public class AccountPage extends BaseSubGui
         }
         if (count == 0)
         {
-            gui.setSlot(22, TradingGui.icon(gui.getPlayer(), Items.PAPER, balances.error() == null ? "ui.empty" : "ui.query_failed", ""));
+            gui.setSlot(22, TradingGui.icon(gui.getPlayer(), Items.PAPER, balances.error() != null ? "ui.query_failed" : balances.loaded() ? "ui.empty" : "ui.loading", ""));
         }
     }
 

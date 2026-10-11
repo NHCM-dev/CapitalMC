@@ -5,7 +5,9 @@ import eu.pb4.sgui.api.elements.*;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.item.*;
 import net.minecraft.world.item.component.ResolvableProfile;
+import nhcm.advmatch.model.SymbolType;
 import nhcm.capitalmc.account.ServerUser;
+import nhcm.capitalmc.CapitalMC;
 import nhcm.capitalmc.exchange.ExchangeMessages;
 import nhcm.capitalmc.i18n.I18n;
 import nhcm.capitalmc.service.GameServices;
@@ -93,6 +95,41 @@ public class GuiWidgets
     public static String amount(long asset, long raw)
     {
         return GameServices.get().assets.find(asset).map(value -> value.format(raw)).orElse(Long.toString(raw));
+    }
+
+    public static void activityNavigation(TradingGui gui, PageType current)
+    {
+        var types = new SymbolType[]{SymbolType.Spot, SymbolType.Perpetual, SymbolType.Future};
+        var icons = new Item[]{Items.GOLDEN_BOOTS, Items.CHAINMAIL_BOOTS, Items.CLOCK};
+        for (int index = 0; index < types.length; index++)
+        {
+            var type = types[index];
+            option(gui, index, icons[index], "ui.enum.SymbolType." + type, "ui.activity.scope_hint", gui.activityType() == type,
+                   () -> gui.showActivity(type, type == SymbolType.Spot && (current == PageType.POSITIONS || current == PageType.POSITION_HISTORY) ? PageType.ORDERS : current));
+        }
+        option(gui, 3, Items.BOOK, "ui.orders", "ui.activity.scope_hint", current == PageType.ORDERS, () -> gui.showPage(PageType.ORDERS));
+        if (gui.activityType() != SymbolType.Spot)
+        {
+            option(gui, 4, Items.SHIELD, "ui.positions", "ui.activity.scope_hint", current == PageType.POSITIONS, () -> gui.showPage(PageType.POSITIONS));
+            option(gui, 6, Items.WRITABLE_BOOK, "ui.position_history", "", current == PageType.POSITION_HISTORY, () -> gui.showPage(PageType.POSITION_HISTORY));
+        }
+        option(gui, 5, Items.WRITABLE_BOOK, "ui.order_history", "", current == PageType.ORDER_HISTORY, () -> gui.showPage(PageType.ORDER_HISTORY));
+        option(gui, 7, Items.REDSTONE_TORCH, "ui.conditional.page", "ui.activity.scope_hint", current == PageType.CONDITIONALS, () -> gui.showPage(PageType.CONDITIONALS));
+        option(gui, 8, Items.PAPER, "ui.trades", "", current == PageType.TRADES, () -> gui.showPage(PageType.TRADES));
+        separator(gui);
+    }
+
+    public static void versionWarning(TradingGui gui, int slot)
+    {
+        if (CapitalMC.runtime == null || CapitalMC.runtime.compatibility.warnings().isEmpty()) return;
+        StringBuilder lore = new StringBuilder();
+        for (var warning : CapitalMC.runtime.compatibility.warnings())
+        {
+            if (!lore.isEmpty()) lore.append('\n');
+            lore.append(text(gui, "ui.data.version_details", warning.source(), warning.stored().equals("unknown") ? text(gui, "ui.data.version_unknown") : warning.stored(), warning.running()));
+        }
+        lore.append('\n').append(text(gui, "ui.data.version_hint"));
+        button(gui, slot, Items.REDSTONE_TORCH, "ui.data.version_warning", lore.toString(), null);
     }
 
     public static String amountInput(TradingGui gui, long id, long minimum)

@@ -16,7 +16,7 @@ import java.util.concurrent.CompletableFuture;
  */
 public class HistoryPage extends BaseSubGui
 {
-    private record Context(UUID user, long epoch, long symbol, ReadCursor cursor)
+    private record Context(UUID user, long epoch, SymbolType type, ReadCursor cursor)
     {
     }
 
@@ -28,7 +28,8 @@ public class HistoryPage extends BaseSubGui
     private final Deque<ReadCursor> previous = new ArrayDeque<>();
     private ReadCursor cursor = new ReadCursor();
     private UUID user;
-    private long epoch, symbol;
+    private long epoch;
+    private SymbolType type;
     private Data displayed;
 
     public HistoryPage(TradingGui gui, PageType page)
@@ -58,35 +59,30 @@ public class HistoryPage extends BaseSubGui
         }
         var current = gui.getUser().orElseThrow();
         long version = CapitalMC.serverUserManager.getSessionVersion(gui.getPlayer().getUUID());
-        long selected = gui.getSelectedSymbol() == null ? 0 : gui.getSelectedSymbol().symbolId();
-        if (!Objects.equals(user, current.getUuid()) || version != epoch || selected != symbol)
+        var selected = gui.activityType();
+        if (!Objects.equals(user, current.getUuid()) || version != epoch || selected != type)
         {
             user = current.getUuid();
             epoch = version;
-            symbol = selected;
+            type = selected;
             reset();
         }
-        GuiWidgets.button(gui, 0, Items.END_CRYSTAL, "gui.capitalmc.refresh", "", this::reset);
-        GuiWidgets.option(gui, 1, Items.BARRIER, "ui.history.all_symbols", "", symbol == 0, () -> {
-            gui.clearSymbolFilter();
-            reset();
-        });
-        GuiWidgets.option(gui, 6, Items.BOOK, "ui.order_history", "", getPage() == PageType.ORDER_HISTORY, () -> gui.showPage(PageType.ORDER_HISTORY));
-        GuiWidgets.option(gui, 7, Items.SHIELD, "ui.position_history", "", getPage() == PageType.POSITION_HISTORY, () -> gui.showPage(PageType.POSITION_HISTORY));
-        GuiWidgets.option(gui, 8, Items.PAPER, "ui.trades", "", getPage() == PageType.TRADES, () -> gui.showPage(PageType.TRADES));
-        GuiWidgets.separator(gui);
-        var context = new Context(user, epoch, symbol, cursor);
-        displayed = cache.get(context, () -> {
+        GuiWidgets.activityNavigation(gui, getPage());
+        var context = new Context(user, epoch, type, cursor);
+        displayed = cache.get(context, () -> SymbolUtil.allSymbols().thenCompose(symbols -> {
             CompletableFuture<? extends ReadResponse<?>> rows = switch (getPage())
             {
-                case ORDER_HISTORY -> TradeUtil.orderPage(current, true, symbol, cursor);
-                case POSITION_HISTORY -> TradeUtil.positionPage(current, true, symbol, cursor);
-                default -> TradeUtil.tradePage(current, symbol, cursor);
+                case ORDER_HISTORY -> ActivityScope.page(next -> TradeUtil.orderPage(current, true, 0, next), context.cursor(),
+                                                        row -> ActivityScope.matches(row, symbols, context.type()) && ActivityScope.terminal(row));
+                case POSITION_HISTORY -> ActivityScope.page(next -> TradeUtil.positionPage(current, true, 0, next), context.cursor(),
+                                                           row -> ActivityScope.matches(row, symbols, context.type()) && (row.closed() || row.size() == 0));
+                default -> ActivityScope.page(next -> TradeUtil.tradePage(current, 0, next), context.cursor(),
+                                              row -> ActivityScope.matches(row, symbols, context.type()));
             };
-            return rows.thenCombine(SymbolUtil.allSymbols(), (r, s) -> new Data(r, s, List.of()))
+            return rows.thenApply(r -> new Data(r, symbols, List.of()))
                        .thenCombine(AssetUtil.allAssets(), (d, a) -> new Data(d.rows, d.symbols, a));
-        });
-        if (displayed == null)
+        }));
+        if (displayed == null || cache.error() != null)
         {
             gui.setSlot(22, TradingGui.icon(gui.getPlayer(), Items.PAPER, cache.error() == null ? "ui.loading" : "ui.query_failed", ""));
             return;
@@ -100,20 +96,20 @@ public class HistoryPage extends BaseSubGui
             {
                 id = o.orderId();
                 market = o.symbolId();
-                details = GuiWidgets.text(gui, "ui.order_history.details", o.side(), o.type(), o.timeInForce(), price(market, o.price()), quantity(market, o.filling().unfilled()), o.filling().status());
+                details = FinancialText.lore(o, displayed.symbols, gui.getPlayer());
             }
             else if (row instanceof PositionView p)
             {
                 id = p.positionId();
                 market = p.symbolId();
-                details = GuiWidgets.text(gui, "ui.position_history.details", p.side(), quantity(market, p.size()), price(market, p.averageEntryPrice()), price(market, p.predictedLiquidationPrice()), quote(market, p.realizedPnL()), p.leverage(), p.marginMode());
+                details = FinancialText.lore(p, displayed.symbols, gui.getPlayer());
             }
             else
             {
                 var t = (TradeView) row;
                 id = t.recordId();
                 market = t.symbolId();
-                details = GuiWidgets.text(gui, "ui.trade_history.details", price(market, t.trade().price()), quantity(market, t.trade().quantity()), t.timestamp(), t.trade().makerOrderId(), t.trade().takerOrderId());
+                details = FinancialText.lore(t, displayed.symbols, gui.getPlayer());
             }
             var view = market(market);
             var builder = new GuiElementBuilder(GameServices.get().assets.find(view.baseAssetId()).orElseThrow().prototype())
@@ -158,6 +154,7 @@ public class HistoryPage extends BaseSubGui
     @Override
     public void renderOverlay(TradingGui gui)
     {
+        GuiWidgets.button(gui, 46, Items.END_CRYSTAL, "gui.capitalmc.refresh", "", this::reset);
         if (!previous.isEmpty())
         {
             GuiWidgets.button(gui, 51, Items.ARROW, "ui.page.previous", "", () -> {
@@ -165,7 +162,7 @@ public class HistoryPage extends BaseSubGui
                 cache.invalidate();
             });
         }
-        if (displayed != null && displayed.rows.page().hasMore())
+        if (cache.error() == null && displayed != null && displayed.rows.page().hasMore())
         {
             var next = displayed.rows.page().next();
             GuiWidgets.button(gui, 52, Items.ARROW, "ui.page.next", "", () -> {

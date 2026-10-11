@@ -1,6 +1,7 @@
 package nhcm.capitalmc.exchange;
 
 import nhcm.advmatch.model.*;
+import nhcm.advmatch.command.read.ReadPosition;
 import nhcm.capitalmc.CapitalMC;
 import nhcm.capitalmc.account.ServerUser;
 import nhcm.capitalmc.service.GameServices;
@@ -15,8 +16,11 @@ public class PositionOrders
 {
     public static CompletableFuture<PositionView> owned(ServerUser user, long id)
     {
-        return UserUtil.getUser(user).thenCompose(backend -> CapitalMC.exchange.positions().get(id).snapshot().thenApply(position -> {
-            if (position.userId() != backend.id() || position.closed())
+        return UserUtil.contractAccount(user).thenCompose(account -> CapitalMC.exchange.submit(new ReadPosition(
+                new ObservationQuery().withPositionId(id).withAccountId(account.id()).withUserId(user.getExchangeUserId())))
+                .thenApply(response -> {
+            var position = QueryUtil.one(response).orElseThrow(() -> new IllegalArgumentException("ui.position.unavailable"));
+            if (position.userId() != user.getExchangeUserId() || position.closed() || position.size() <= 0)
             {
                 throw new IllegalArgumentException("cli.position.owner");
             }

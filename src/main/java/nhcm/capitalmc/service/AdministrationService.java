@@ -42,6 +42,13 @@ public class AdministrationService
 
     public <T> CompletableFuture<T> perform(String operator, String reason, String action, JsonElement payload, Supplier<CompletableFuture<T>> work)
     {
+        if (CapitalMC.runtime == null) return performInternal(operator, reason, action, payload, work);
+        return CapitalMC.runtime.backend.exclusive("configuration", () -> services.state.refreshShared()
+                .thenCompose(changed -> performInternal(operator, reason, action, payload, work)));
+    }
+
+    private <T> CompletableFuture<T> performInternal(String operator, String reason, String action, JsonElement payload, Supplier<CompletableFuture<T>> work)
+    {
         if (operator == null || operator.isBlank() || reason == null || reason.isBlank())
         {
             return CompletableFuture.failedFuture(new IllegalArgumentException("Operator and reason required"));
@@ -94,6 +101,12 @@ public class AdministrationService
                                                                            return error;
                                                                        })
                                                                              .thenCompose(original -> CompletableFuture.failedFuture(original)));
+    }
+
+    /** Internal sub-operation of a workflow that already holds the configuration lease. */
+    <T> CompletableFuture<T> performLeased(String operator, String reason, String action, JsonElement payload, Supplier<CompletableFuture<T>> work)
+    {
+        return performInternal(operator, reason, action, payload, work);
     }
 
     /**
@@ -472,7 +485,7 @@ public class AdministrationService
                 }
                 long mark = base.units().parsePrice(a[4], quote.units());
                 var spec = a.length > 5 ? patch(new ContractSpec(), a[5], ContractSpec.class) : new ContractSpec();
-                return a[0].equalsIgnoreCase("future") ? services.markets.createFuture(a[1], base.id(), quote.id(), mark, spec) : a[0].equalsIgnoreCase("perpetual") ? services.markets.createPerpetual(a[1], base.id(), quote.id(), mark, spec) : CompletableFuture.failedFuture(new IllegalArgumentException("Unknown symbol type"));
+                return a[0].equalsIgnoreCase("future") ? services.markets.createFuture(a[1], base.id(), quote.id(), mark, spec, true) : a[0].equalsIgnoreCase("perpetual") ? services.markets.createPerpetual(a[1], base.id(), quote.id(), mark, spec, true) : CompletableFuture.failedFuture(new IllegalArgumentException("Unknown symbol type"));
             }
             case "checkpoint" ->
             {

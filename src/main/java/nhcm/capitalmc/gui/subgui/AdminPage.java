@@ -568,7 +568,7 @@ public class AdminPage extends BaseSubGui
         int slot = 18;
         for (var row : investigationData.rows.values())
         {
-            String description = FinancialText.row(row, investigationData.markets, gui.getPlayer());
+            String description = FinancialText.lore(row, investigationData.markets, gui.getPlayer());
             GuiWidgets.button(gui, slot++, Items.PAPER, description, "", () -> GuiActions.message(gui, description));
         }
         if (investigationData.rows.values().isEmpty())
@@ -584,6 +584,7 @@ public class AdminPage extends BaseSubGui
         {
             return;
         }
+        GuiWidgets.versionWarning(gui, 47);
         GuiWidgets.button(gui, 50, Items.COMPASS, "ui.search", "&7" + search, () -> GuiActions.input(gui, "ui.search.input", String::strip, value -> {
             search = value.toLowerCase(Locale.ROOT);
             page = 0;

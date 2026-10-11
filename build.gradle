@@ -39,8 +39,9 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
-    implementation 'nhcm:advmatch:1.2.0'
-    include 'nhcm:advmatch:1.2.0'
+    implementation 'nhcm:advmatch:1.3.0'
+    implementation 'com.google.code.gson:gson:2.13.2'
+    include 'nhcm:advmatch:1.3.0'
 
     compileOnly("org.projectlombok:lombok:1.18.48")
     annotationProcessor("org.projectlombok:lombok:1.18.48")
@@ -48,6 +49,26 @@ dependencies {
     testCompileOnly("org.projectlombok:lombok:1.18.48")
     testAnnotationProcessor("org.projectlombok:lombok:1.18.48")
 }
+
+tasks.register('exchangeServerJar', Jar) {
+    dependsOn classes
+    archiveClassifier = 'exchange-server'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(sourceSets.main.output) {
+        include 'nhcm/capitalmc/backend/**'
+        include 'nhcm/capitalmc/account/**'
+        include 'nhcm/capitalmc/management/ServerUserManager*'
+        include 'nhcm/capitalmc/management/UserStorage*'
+        include 'nhcm/capitalmc/service/ApplicationExecutors*'
+        include 'nhcm/capitalmc/service/ServiceState*'
+        include 'capitalmc-build.properties'
+    }
+    from({ configurations.runtimeClasspath.findAll { it.name.startsWith('advmatch-') || it.name.startsWith('gson-') }.collect { zipTree(it) } }) {
+        exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA', 'module-info.class'
+    }
+    manifest { attributes 'Main-Class': 'nhcm.capitalmc.backend.ExchangeServerMain' }
+}
+tasks.named('assemble') { dependsOn exchangeServerJar }
 
 test {
     useJUnitPlatform()
@@ -59,7 +80,7 @@ test {
 processResources {
     def modVersion = project.version
     inputs.property 'version', modVersion
-    filesMatching('fabric.mod.json') { expand version: modVersion }
+    filesMatching(['fabric.mod.json', 'capitalmc-build.properties']) { expand version: modVersion }
 }
 
 java {

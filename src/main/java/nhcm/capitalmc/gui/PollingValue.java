@@ -16,6 +16,7 @@ public class PollingValue<T>
     private Object key;
     private long generation, queried;
     private boolean pending;
+    private boolean loaded;
     private Throwable error;
 
     public PollingValue(T empty)
@@ -26,7 +27,7 @@ public class PollingValue<T>
 
     public T get(Object context, Supplier<CompletableFuture<T>> query)
     {
-        return get(context, 50, query);
+        return get(context, 250, query);
     }
 
     public T get(Object context, long intervalMillis, Supplier<CompletableFuture<T>> query)
@@ -38,9 +39,10 @@ public class PollingValue<T>
             queried = 0;
             pending = false;
             value = empty;
+            loaded = false;
             error = null;
         }
-        if (!pending && (queried == 0 || System.nanoTime() - queried >= Math.max(50, intervalMillis) * 1_000_000L))
+        if (!pending && (queried == 0 || System.nanoTime() - queried >= Math.max(100, intervalMillis) * 1_000_000L))
         {
             pending = true;
             queried = System.nanoTime();
@@ -57,6 +59,7 @@ public class PollingValue<T>
                     if (failure == null)
                     {
                         value = result;
+                        loaded = true;
                     }
                 }));
             } catch (RuntimeException failure)
@@ -73,6 +76,11 @@ public class PollingValue<T>
         return error;
     }
 
+    public boolean loaded()
+    {
+        return loaded;
+    }
+
     public void invalidate()
     {
         generation++;
@@ -80,6 +88,7 @@ public class PollingValue<T>
         pending = false;
         queried = 0;
         value = empty;
+        loaded = false;
         error = null;
     }
 }

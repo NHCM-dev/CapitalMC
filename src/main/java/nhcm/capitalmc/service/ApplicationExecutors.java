@@ -1,7 +1,5 @@
 package nhcm.capitalmc.service;
 
-import nhcm.capitalmc.CapitalMC;
-
 import java.util.concurrent.*;
 import java.util.function.Supplier;
 
@@ -35,12 +33,13 @@ public class ApplicationExecutors
             {
                 if (!executor.awaitTermination(10, TimeUnit.SECONDS))
                 {
-                    CapitalMC.logger.error("Application executor did not drain before shutdown; pending operations require recovery");
+                    System.getLogger(ApplicationExecutors.class.getName()).log(System.Logger.Level.ERROR,
+                            "Application executor did not drain before shutdown; pending operations require recovery");
                 }
             } catch (InterruptedException error)
             {
                 Thread.currentThread().interrupt();
-                CapitalMC.logger.error("Interrupted while draining application work", error);
+                System.getLogger(ApplicationExecutors.class.getName()).log(System.Logger.Level.ERROR, "Interrupted while draining application work", error);
                 return;
             }
         }

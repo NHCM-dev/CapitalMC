@@ -23,6 +23,7 @@ public class ConditionalPage extends BaseSubGui
     private boolean history;
     private Object context;
     private ReadPage queryPage = new ReadPage();
+    private Data displayed;
 
     public ConditionalPage(TradingGui gui)
     {
@@ -78,7 +79,8 @@ public class ConditionalPage extends BaseSubGui
         }
         var user = GuiActions.user(gui);
         long epoch = CapitalMC.serverUserManager.getSessionVersion(gui.getPlayer().getUUID());
-        var key = List.of(user.getUuid(), epoch);
+        var type = gui.activityType();
+        var key = List.of(user.getUuid(), epoch, type);
         if (!key.equals(context))
         {
             context = key;
@@ -86,8 +88,9 @@ public class ConditionalPage extends BaseSubGui
             reset();
         }
         long selected = gui.getSelectedConditional();
+        boolean showHistory = history;
+        var currentCursor = cursor;
         var data = cache.get(List.of(key, history, cursor, selected), () -> {
-            var rows = CapitalMC.exchange.conditionalOrders().list(new ObservationQuery().withUserId(user.getExchangeUserId()).withIncludeTerminal(history).withLimit(27).withCursor(cursor));
             CompletableFuture<ConditionalOrderView> detail = selected == 0 ? CompletableFuture.completedFuture(null) : CapitalMC.exchange.conditionalOrders().get(selected).snapshot().thenApply(value -> {
                 if (value.request().userId() != user.getExchangeUserId())
                 {
@@ -95,41 +98,40 @@ public class ConditionalPage extends BaseSubGui
                 }
                 return value;
             });
-            return rows.thenCombine(SymbolUtil.allSymbols(), (result, symbols) -> new Data(result.values(), symbols, result.page(), null))
+            return SymbolUtil.allSymbols().thenCompose(symbols -> ActivityScope.page(next -> CapitalMC.exchange.conditionalOrders().list(
+                    new ObservationQuery().withUserId(user.getExchangeUserId()).withIncludeTerminal(showHistory).withLimit(27).withCursor(next)), currentCursor,
+                    row -> ActivityScope.matches(row, symbols, type) && (showHistory ? row.status() != ConditionalOrderStatus.Waiting : row.status() == ConditionalOrderStatus.Waiting))
+                    .thenApply(result -> new Data(result.values(), symbols, result.page(), null)))
                        .thenCombine(detail, (result, value) -> new Data(result.rows, result.symbols, result.page, value));
         });
+        displayed = data;
         queryPage = data.page;
-        GuiWidgets.option(gui, 7, Items.REDSTONE_TORCH, "ui.conditional.waiting", "", !history, () -> {
-            history = false;
+        GuiWidgets.activityNavigation(gui, getPage());
+        GuiWidgets.option(gui, 7, Items.REDSTONE_TORCH, history ? "ui.conditional.history" : "ui.conditional.waiting", "ui.conditional.toggle_history", true, () -> {
+            history = !history;
+            gui.selectConditional(0);
             reset();
         });
-        GuiWidgets.option(gui, 8, Items.BOOK, "ui.conditional.history", "", history, () -> {
-            history = true;
-            reset();
-        });
-        GuiWidgets.button(gui, 6, Items.WRITABLE_BOOK, "ui.conditional.ticket", "", () -> gui.showPage(PageType.CONDITIONAL_TICKET));
-        GuiWidgets.separator(gui);
-        if (data.selected != null)
+        if (cache.error() != null)
         {
-            var row = data.selected;
-            GuiWidgets.button(gui, 4, Items.PAPER, "#" + row.conditionalOrderId(), FinancialText.row(row, data.symbols, gui.getPlayer()), null);
-            if (row.status() == ConditionalOrderStatus.Waiting)
-            {
-                GuiWidgets.button(gui, 0, Items.BARRIER, "ui.conditional.cancel", "ui.conditional.cancel_hint", () -> GuiActions.confirm(gui, GuiWidgets.text(gui, "ui.conditional.cancel_confirm", row.conditionalOrderId()),
-                                                                                                                                         () -> GuiActions.task(gui, GameServices.get().settlements.cancelConditional(user, row.conditionalOrderId()), "ui.conditional.cancel_done", row.conditionalOrderId())));
-                GuiWidgets.button(gui, 1, Items.COMPASS, "ui.conditional.modify_trigger", "", () -> modify(data, row, "trigger"));
-                GuiWidgets.button(gui, 2, Items.PAPER, "ui.conditional.modify_quantity", "", () -> modify(data, row, "quantity"));
-                if (row.request().type() == OrderType.Limit)
-                {
-                    GuiWidgets.button(gui, 3, Items.BOW, "ui.conditional.modify_price", "", () -> modify(data, row, "price"));
-                }
-            }
+            displayed = null;
+            queryPage = new ReadPage();
+            GuiWidgets.button(gui, 22, Items.PAPER, "ui.query_failed", ExchangeMessages.error(gui.getPlayer(), cache.error()), () -> {
+                gui.selectConditional(0);
+                reset();
+            });
+            return;
+        }
+        if (!cache.loaded())
+        {
+            gui.setSlot(22, TradingGui.icon(gui.getPlayer(), Items.CLOCK, "ui.loading", ""));
+            return;
         }
         for (int i = 0; i < data.rows.size(); i++)
         {
             var row = data.rows.get(i);
             GuiWidgets.button(gui, 18 + i, row.request().kind() == ConditionalOrderKind.TakeProfit ? Items.EMERALD : Items.REDSTONE,
-                              symbol(data, row).name() + " #" + row.conditionalOrderId(), FinancialText.row(row, data.symbols, gui.getPlayer()),
+                              symbol(data, row).name() + " #" + row.conditionalOrderId(), FinancialText.lore(row, data.symbols, gui.getPlayer()),
                               () -> gui.selectConditional(row.conditionalOrderId()));
         }
         if (data.rows.isEmpty())
@@ -141,6 +143,32 @@ public class ConditionalPage extends BaseSubGui
     @Override
     public void renderOverlay(TradingGui gui)
     {
+        GuiWidgets.button(gui, 46, Items.END_CRYSTAL, "gui.capitalmc.refresh", "", () -> {
+            gui.selectConditional(0);
+            reset();
+        });
+        if (displayed != null && displayed.selected != null)
+        {
+            var data = displayed;
+            var row = data.selected;
+            var user = GuiActions.user(gui);
+            GuiWidgets.button(gui, 46, Items.PAPER, "#" + row.conditionalOrderId(), FinancialText.lore(row, data.symbols, gui.getPlayer()), () -> gui.selectConditional(0));
+            if (row.status() == ConditionalOrderStatus.Waiting)
+            {
+                GuiWidgets.button(gui, 47, Items.BARRIER, "ui.conditional.cancel", "ui.conditional.cancel_hint", () -> GuiActions.confirm(gui, GuiWidgets.text(gui, "ui.conditional.cancel_confirm", row.conditionalOrderId()),
+                        () -> GuiActions.task(gui, GameServices.get().settlements.cancelConditional(user, row.conditionalOrderId()), "ui.conditional.cancel_done", row.conditionalOrderId())));
+                GuiWidgets.button(gui, 48, Items.COMPASS, "ui.conditional.modify_trigger", "", () -> modify(data, row, "trigger"));
+                GuiWidgets.button(gui, 49, Items.PAPER, "ui.conditional.modify_quantity", "", () -> modify(data, row, "quantity"));
+                if (row.request().type() == OrderType.Limit)
+                {
+                    GuiWidgets.button(gui, 50, Items.BOW, "ui.conditional.modify_price", "", () -> modify(data, row, "price"));
+                }
+            }
+        }
+        else
+        {
+            GuiWidgets.button(gui, 50, Items.WRITABLE_BOOK, "ui.conditional.ticket", "", () -> gui.showPage(PageType.CONDITIONAL_TICKET));
+        }
         if (!previous.isEmpty())
         {
             GuiWidgets.button(gui, 51, Items.ARROW, "ui.page.previous", "", () -> {

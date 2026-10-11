@@ -4,6 +4,7 @@ import net.minecraft.world.item.Items;
 import nhcm.advmatch.model.*;
 import nhcm.capitalmc.CapitalMC;
 import nhcm.capitalmc.exchange.PositionOrders;
+import nhcm.capitalmc.exchange.FinancialText;
 import nhcm.capitalmc.gui.*;
 import nhcm.capitalmc.service.GameServices;
 
@@ -80,7 +81,7 @@ public class ConditionalTicketPage extends BaseSubGui
             String summary = GuiWidgets.text(gui, "ui.conditional.ticket_confirm", symbol.name(), ticket.kind(), ticket.side(), ticket.source(),
                                              base.units().price(ticket.triggerPrice(), quote.units()), quote.displayName(), base.displayName(), ticket.type(),
                                              ticket.type() == OrderType.Market ? GuiWidgets.text(gui, "ui.enum.OrderType.Market") : base.units().price(ticket.price(), quote.units()),
-                                             GameServices.get().markets.quantityUnits(symbol).format(ticket.quantity()), ticket.timeInForce(), ticket.ocoOrderId(),
+                                             FinancialText.quantity(symbol, ticket.quantity(), gui.getPlayer()), ticket.timeInForce(), ticket.ocoOrderId(),
                                              bound == 0 ? "—" : base.units().price(bound, quote.units()));
             if (contract)
             {
@@ -164,7 +165,7 @@ public class ConditionalTicketPage extends BaseSubGui
                         input(GuiWidgets.text(gui, "ui.conditional.cap_input") + "\n" + pricePrompt, text -> text.equalsIgnoreCase("auto") ? 0L : price(symbol, text), value -> protection = value);
                     }
                 });
-        GuiWidgets.button(gui, 20, Items.PAPER, GuiWidgets.text(gui, "ui.conditional.size", GameServices.get().markets.quantityUnits(symbol).format(quantity)), "ui.conditional.quantity_input",
+        GuiWidgets.button(gui, 20, Items.PAPER, GuiWidgets.text(gui, "ui.conditional.size", FinancialText.quantity(symbol, quantity, gui.getPlayer())), "ui.conditional.quantity_input",
                           () -> input(GuiWidgets.text(gui, "ui.conditional.quantity_input"), text -> GameServices.get().markets.quantityUnits(symbol).parse(text), value -> quantity = value));
         if (contract)
         {

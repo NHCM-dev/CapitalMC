@@ -2,6 +2,7 @@ package nhcm.capitalmc.exchange;
 
 import nhcm.advmatch.BusinessException;
 import nhcm.advmatch.model.*;
+import nhcm.advmatch.remote.RemoteFailure;
 import nhcm.capitalmc.i18n.I18n;
 import nhcm.capitalmc.service.CurrencyService;
 import org.junit.jupiter.api.Test;
@@ -40,6 +41,22 @@ class ExchangeMessagesTest
             assertEquals(expected, I18n.format(language, "ui.peg.reserve_funds_details", "Private Asset", 123456, 654321));
             assertFalse(expected.contains("123456"));
             assertFalse(expected.contains("654321"));
+        }
+    }
+
+    @Test
+    void remoteUncertaintyAndPublicKeysSurviveWrappedCauses()
+    {
+        for (String language : new String[]{"en_us", "zh_cn"})
+        {
+            for (boolean sent : new boolean[]{false, true})
+            {
+                var failure = new RemoteFailure("Disconnected", sent, new IllegalStateException("socket closed"));
+                String key = sent ? "ui.exchange.request_uncertain" : "ui.exchange.connection_stale";
+                assertEquals(I18n.format(language, key), ExchangeMessages.error(language, new CompletionException(failure)));
+            }
+            var failure = new IllegalStateException("ui.custody.binding_changed", new IllegalStateException("Private backend detail"));
+            assertEquals(I18n.format(language, "ui.custody.binding_changed"), ExchangeMessages.error(language, new CompletionException(failure)));
         }
     }
 

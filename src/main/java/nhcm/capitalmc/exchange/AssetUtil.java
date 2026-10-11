@@ -28,7 +28,7 @@ public class AssetUtil
 
     public static CompletableFuture<List<AssetView>> allAssets()
     {
-        return QueryUtil.shared("assets", 1_000_000_000L, AssetUtil::allAssetsFresh);
+        return QueryUtil.liveList(new ObservationQuery().withKind(ReadKind.Assets), AssetView.class, QueryUtil.exchange().assets()::list);
     }
 
     /**

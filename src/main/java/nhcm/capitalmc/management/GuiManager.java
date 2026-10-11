@@ -52,7 +52,7 @@ public class GuiManager
                     queued.set(false);
                 }
             });
-        }, 50, 50, TimeUnit.MILLISECONDS);
+        }, 250, 250, TimeUnit.MILLISECONDS);
     }
 
     public void stopRefreshing()

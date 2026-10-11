@@ -2,6 +2,8 @@ package nhcm.capitalmc.exchange;
 
 import nhcm.advmatch.BusinessException;
 import nhcm.advmatch.Exchange;
+import nhcm.advmatch.ObservationSubscription;
+import nhcm.advmatch.SubscriptionSnapshot;
 import nhcm.advmatch.model.*;
 import nhcm.capitalmc.CapitalMC;
 import nhcm.capitalmc.service.ApplicationExecutors;
@@ -9,6 +11,8 @@ import nhcm.capitalmc.service.ApplicationExecutors;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.time.Duration;
+import java.util.concurrent.Executors;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -19,6 +23,75 @@ class QueryUtil
     }
 
     private static final Map<String, Shared> SHARED = new HashMap<>();
+    private record LiveKey(Exchange owner, ObservationQuery query) {}
+    private static class Live
+    {
+        ObservationSubscription subscription;
+        long used = System.nanoTime();
+    }
+    private static final Map<LiveKey, Live> LIVE = new HashMap<>();
+
+    static
+    {
+        var cleanup = Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("capitalmc-subscription-cleanup").factory());
+        cleanup.scheduleWithFixedDelay(QueryUtil::expire, 1, 1, TimeUnit.SECONDS);
+    }
+
+    private static synchronized void expire()
+    {
+        long now = System.nanoTime();
+        LIVE.entrySet().removeIf(entry -> {
+            if (entry.getKey().owner != CapitalMC.exchange || now - entry.getValue().used > 10_000_000_000L)
+            {
+                entry.getValue().subscription.close();
+                return true;
+            }
+            return false;
+        });
+    }
+
+    static synchronized CompletableFuture<ObservationResult> live(Exchange owner, ObservationQuery query)
+    {
+        var key = new LiveKey(owner, query);
+        var feed = LIVE.get(key);
+        if (feed == null)
+        {
+            expire();
+            if (LIVE.size() >= 1024) return CompletableFuture.failedFuture(new IllegalStateException("ui.exchange.subscription_limit"));
+            feed = new Live();
+            feed.subscription = owner.subscriptions().subscribe(query, Duration.ofMillis(250), image -> {});
+            LIVE.put(key, feed);
+        }
+        feed.used = System.nanoTime();
+        var image = feed.subscription.latest();
+        return image == null ? feed.subscription.first().thenApply(QueryUtil::liveResult)
+                             : CompletableFuture.completedFuture(image).thenApply(QueryUtil::liveResult);
+    }
+
+    private static ObservationResult liveResult(SubscriptionSnapshot image)
+    {
+        if (image.state() != SubscriptionSnapshot.State.LIVE)
+        {
+            throw new IllegalStateException("ui.exchange.connection_stale", image.error());
+        }
+        return image.result();
+    }
+
+    static <T> CompletableFuture<ReadResponse<T>> liveRows(ObservationQuery query, Class<T> type)
+    {
+        return live(exchange(), query).thenApply(image -> image.typed(type));
+    }
+
+    /** Keep complete list semantics: oversized snapshots use the existing cursor reader. */
+    static <T> CompletableFuture<List<T>> liveList(ObservationQuery query, Class<T> type,
+                                                   Function<ObservationQuery, CompletableFuture<ReadResponse<T>>> pages)
+    {
+        return liveRows(query.withLimit(1024), type).thenCompose(response -> {
+            if (response.page().state() != ReadState.Success) throw new BusinessException(response.page());
+            return response.page().hasMore() ? shared("overflow:" + query, 1_000_000_000L, () -> all(pages))
+                                            : CompletableFuture.completedFuture(response.values());
+        });
+    }
 
     @SuppressWarnings("unchecked")
     static synchronized <T> CompletableFuture<T> shared(String key, long lifetimeNanos, Supplier<CompletableFuture<T>> read)

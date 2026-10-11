@@ -436,7 +436,9 @@ public class UserCommand extends BaseCommand
             var user = current(c);
             long epoch = CapitalMC.serverUserManager.getSessionVersion(c.getSource().getPlayerOrException().getUUID());
             long id = LongArgumentType.getLong(c, "conditional");
-            var work = CapitalMC.exchange.conditionalOrders().get(id).snapshot().thenCombine(SymbolUtil.allSymbols(), Map::entry)
+            var work = CapitalMC.exchange.conditionalOrders().get(id).snapshot()
+                                         .thenCompose(view -> CapitalMC.exchange.symbols().get(view.request().symbolId()).snapshot()
+                                                                       .thenApply(symbol -> Map.entry(view, symbol)))
                                          .thenCompose(result -> GameServices.get().onServer(() -> {
                                              checkSession(c, user, epoch);
                                              var view = result.getKey();
@@ -446,7 +448,7 @@ public class UserCommand extends BaseCommand
                                              }
                                              if (action.equals("view"))
                                              {
-                                                 return CompletableFuture.completedFuture(FinancialText.row(view, result.getValue(), c.getSource().getPlayer()));
+                                                 return CompletableFuture.completedFuture(FinancialText.row(view, List.of(result.getValue()), c.getSource().getPlayer()));
                                              }
                                              CompletableFuture<CommandReceipt> mutation;
                                              if (action.equals("cancel"))
@@ -455,7 +457,7 @@ public class UserCommand extends BaseCommand
                                              }
                                              else
                                              {
-                                                 var symbol = result.getValue().stream().filter(value -> value.symbolId() == view.request().symbolId()).findFirst().orElseThrow();
+                                                 var symbol = result.getValue();
                                                  String price = arg(c, "price");
                                                  if (view.request().type() == OrderType.Market && !price.equals("0"))
                                                  {

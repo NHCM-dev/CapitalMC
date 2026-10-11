@@ -24,6 +24,7 @@ public class BalanceUtil
     {
         QueryUtil.positive(accountId);
         QueryUtil.positive(assetId);
+        // Operation previews and checks need an explicit fresh read; account list rendering uses subscriptions.
         return exchange.submit(new ReadBalance(new ObservationQuery().withAccountId(accountId).withAssetId(assetId)))
                        .thenApply(QueryUtil::one);
     }
@@ -50,7 +51,7 @@ public class BalanceUtil
 
     public static CompletableFuture<List<BalanceView>> allBalances(Account account)
     {
-        return QueryUtil.all(account::balances);
+        return QueryUtil.liveList(new ObservationQuery().withKind(ReadKind.Balances).withAccountId(account.id()), BalanceView.class, account::balances);
     }
 
     public static CompletableFuture<List<BalanceView>> allSpotBalances(ServerUser user)

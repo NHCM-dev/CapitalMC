@@ -4,6 +4,7 @@ import com.google.gson.*;
 import nhcm.advmatch.BusinessException;
 import nhcm.advmatch.Exchange;
 import nhcm.advmatch.command.account.*;
+import nhcm.advmatch.command.Command;
 import nhcm.advmatch.command.contract.AddMargin;
 import nhcm.advmatch.command.order.CancelOrder;
 import nhcm.advmatch.command.order.PlaceOrder;
@@ -12,6 +13,8 @@ import nhcm.advmatch.command.order.ModifyConditionalOrder;
 import nhcm.advmatch.command.order.CancelConditionalOrder;
 import nhcm.advmatch.model.ConditionalOrderRequest;
 import nhcm.advmatch.command.persistence.Flush;
+import nhcm.advmatch.command.read.ReadPosition;
+import nhcm.advmatch.model.ObservationQuery;
 import nhcm.advmatch.model.AccountType;
 import nhcm.advmatch.model.BalanceDelta;
 import nhcm.advmatch.model.CommandReceipt;
@@ -29,6 +32,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 
 /**
  * Audited, idempotent exchange mutations. In-doubt commands remain in the journal for reconciliation.
@@ -42,6 +46,7 @@ public class SettlementService
     private final Exchange exchange;
     private final ServiceState state;
     private final McAssetRegistry assets;
+    private final LongSupplier requestIds;
     private final Set<Long> activeRequests = ConcurrentHashMap.newKeySet();
 
     public SettlementService(GameServices services)
@@ -49,6 +54,7 @@ public class SettlementService
         this.exchange = CapitalMC.exchange;
         this.state = services.state;
         this.assets = services.assets;
+        this.requestIds = CapitalMC.runtime == null ? null : CapitalMC.runtime.backend::nextRequestId;
     }
 
     public SettlementService(Exchange exchange, ServiceState state)
@@ -56,6 +62,7 @@ public class SettlementService
         this.exchange = exchange;
         this.state = state;
         this.assets = null;
+        this.requestIds = null;
     }
 
     public CompletableFuture<Long> account(ServerUser user, AccountType type)
@@ -145,12 +152,24 @@ public class SettlementService
             });
             return new Request(request, null);
         }).thenCompose(request -> request.previous != null ? CompletableFuture.completedFuture(new Mutation(request.id, request.previous))
-                : accepted(exchange.submit(new UpdateBalance(account, asset, change, request.id)), request.id)
+                : accepted(submitCustody(new UpdateBalance(account, asset, change, request.id), type, operation), request.id)
                   .thenApply(receipt -> new Mutation(request.id, receipt)));
     }
 
     private record Request(long id, CommandReceipt previous)
     {
+    }
+
+    private CompletableFuture<CommandReceipt> submitCustody(Command<CommandReceipt> command, String type, String operation)
+    {
+        if (assets == null || CapitalMC.runtime == null || !Set.of("DEPOSIT", "WITHDRAW").contains(type)) return exchange.submit(command);
+        var records = state.section("itemOperations").getAsJsonObject("itemOperations");
+        var record = records == null || operation == null ? null : records.getAsJsonObject(operation);
+        if (record == null || !record.has("bindings"))
+        {
+            return CompletableFuture.failedFuture(new IllegalStateException("ui.operation.review"));
+        }
+        return CapitalMC.runtime.backend.custody(command, record.getAsJsonObject("bindings"));
     }
 
     /**
@@ -221,7 +240,7 @@ public class SettlementService
             });
             return new Request(request, null);
         }).thenCompose(request -> request.previous != null ? CompletableFuture.completedFuture(new Mutation(request.id, request.previous))
-                : accepted(exchange.submit(new BalanceTransaction(legs, conserve, request.id)), request.id)
+                : accepted(submitCustody(new BalanceTransaction(legs, conserve, request.id), type, operation), request.id)
                   .thenApply(receipt -> new Mutation(request.id, receipt)));
     }
 
@@ -451,7 +470,10 @@ public class SettlementService
 
     private CompletableFuture<CommandReceipt> changeMargin(long user, long position, long amount)
     {
-        return exchange.positions().find(position).thenCompose(value -> value.snapshot()).thenComposeAsync(view -> {
+        return exchange.users().get(user).contractAccount().thenCompose(account -> exchange.submit(new ReadPosition(
+                new ObservationQuery().withAccountId(account.id()).withUserId(user).withPositionId(position))))
+                .thenApply(response -> response.values().stream().findFirst().orElseThrow(() -> new IllegalArgumentException("ui.position.unavailable")))
+                .thenComposeAsync(view -> {
             if (view.userId() != user)
             {
                 throw new SecurityException("Position belongs to another user");
@@ -468,8 +490,9 @@ public class SettlementService
     private long begin(String type, long source, long target, long asset, long amount, Consumer<JsonObject> metadata)
     {
         long[] request = new long[1];
+        long allocated = requestIds == null ? 0 : requestIds.getAsLong();
         state.update(root -> {
-            long id = Math.addExact(root.has("request") ? root.get("request").getAsLong() : Math.multiplyExact(System.currentTimeMillis(), 1000), 1);
+            long id = allocated != 0 ? allocated : Math.addExact(root.has("request") ? root.get("request").getAsLong() : Math.multiplyExact(System.currentTimeMillis(), 1000), 1);
             request[0] = id;
             root.addProperty("request", id);
             JsonObject journal = root.has("commands") ? root.getAsJsonObject("commands") : new JsonObject();

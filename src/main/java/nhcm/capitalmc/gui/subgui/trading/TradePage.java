@@ -197,7 +197,7 @@ public abstract class TradePage extends BaseSubGui
 
     private String quantityText(long raw)
     {
-        return quantityUnits().format(raw) + (GameServices.get().markets.lotSize(market.symbolId()) == 0 ? "" : " " + lotName());
+        return quantityUnits().format(raw) + " " + (GameServices.get().markets.lotSize(market.symbolId()) == 0 ? base.displayName() : lotName());
     }
 
     private String amountsLore(long rawPrice, long rawQuantity)
@@ -548,12 +548,12 @@ public abstract class TradePage extends BaseSubGui
             turnover = turnover.add(q.multiply(BigInteger.valueOf(row.trade().price())).multiply(BigInteger.valueOf(multiplier)));
         }
         String lore = GuiWidgets.text(gui, "ui.trade.statistics", baseUnits().format(volume.multiply(BigInteger.valueOf(multiplier))),
-                                      quoteUnits().format(turnover), displayedStatistics.trades().size());
+                                      quoteUnits().format(turnover), displayedStatistics.trades().size(), base.displayName(), quote.displayName());
         var view = displayedStatistics.contract();
         if (view != null)
         {
             lore += "\n" + GuiWidgets.text(gui, "ui.trade.contract_statistics", priceText(view.referencePrices().indexPrice()), priceText(view.markPrice()),
-                                           DecimalUnits.format(view.referencePrices().fundingRate(), 4), DecimalUnits.format(view.lastFundingRate(), 4));
+                                           DecimalUnits.format(view.referencePrices().fundingRate(), 4), DecimalUnits.format(view.lastFundingRate(), 4), quote.displayName(), base.displayName());
         }
         loreSnapshot = displayedStatistics;
         cachedStatisticsLore = lore;
@@ -969,7 +969,8 @@ public abstract class TradePage extends BaseSubGui
                     gui.getUser().isEmpty() ? GuiWidgets.text(gui, "gui.capitalmc.account.login_required") :
                             funds.error() != null || statistics.error() != null ? GuiWidgets.text(gui, "ui.query_failed") :
                                     displayedFunds == null || displayedStatistics == null ? GuiWidgets.text(gui, "ui.loading") :
-                                            GuiWidgets.text(gui, "ui.trade.available_quantity", quantityText(available));
+                                            GuiWidgets.text(gui, contract() ? (side == OrderSide.Bid ? "ui.trade.available_long" : "ui.trade.available_short")
+                                                                          : (side == OrderSide.Bid ? "ui.trade.available_buy" : "ui.trade.available_sell"), quantityText(available));
             status = quoteBalanceLore(gui) + "\n" + status;
             if (type == OrderType.Limit && price <= 0)
             {
@@ -1001,8 +1002,8 @@ public abstract class TradePage extends BaseSubGui
         gui.setSlot(42, GuiWidgets.asset(gui, base.assetId(), GuiWidgets.text(gui, "ui.trade.base"), () -> gui.showAsset(base.assetId())));
         gui.setSlot(43, GuiWidgets.asset(gui, quote.assetId(), GuiWidgets.text(gui, "ui.trade.quote"), () -> gui.showAsset(quote.assetId())));
         GuiWidgets.button(gui, 44, Items.OAK_SIGN, market.name(), GuiWidgets.text(gui, "ui.trade.symbol_info", market.type(), priceText(market.tradingRules().priceTick()), quantityText(market.tradingRules().quantityStep()), quantityText(market.tradingRules().minQuantity())), () -> gui.showPage(PageType.SYMBOL_INFO));
-        GuiWidgets.button(gui, 38, Items.REDSTONE_TORCH, "ui.conditional.page", "", () -> gui.showPage(PageType.CONDITIONALS));
-        GuiWidgets.button(gui, 39, Items.BOOK, "ui.orders", "", () -> gui.showPage(PageType.ORDERS));
+        GuiWidgets.button(gui, 38, Items.REDSTONE_TORCH, "ui.conditional.page", "ui.activity.scope_hint", () -> gui.showActivity(market.type(), PageType.CONDITIONALS));
+        GuiWidgets.button(gui, 39, Items.BOOK, "ui.orders", "ui.activity.scope_hint", () -> gui.showActivity(market.type(), PageType.ORDERS));
         if (contract())
         {
             if (!contractAction.closing)
@@ -1023,7 +1024,7 @@ public abstract class TradePage extends BaseSubGui
                     fractionSelected = 0;
                 });
             }
-            GuiWidgets.button(gui, 40, Items.SHIELD, "ui.positions", "", () -> gui.showPage(PageType.POSITIONS));
+            GuiWidgets.button(gui, 40, Items.SHIELD, "ui.positions", "ui.activity.scope_hint", () -> gui.showActivity(market.type(), PageType.POSITIONS));
         }
         book(gui, displayedStatistics == null ? List.of() : OrderBookPage.levels(gui, market, displayedStatistics, true), 4, true);
         book(gui, displayedStatistics == null ? List.of() : OrderBookPage.levels(gui, market, displayedStatistics, false), 22, false);
